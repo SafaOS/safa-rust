@@ -1,13 +1,13 @@
 diff --git a/build.sh b/build.sh
 new file mode 100755
-index 000000000..4da9b4983
+index 000000000..38c9d5f9e
 --- /dev/null
 +++ b/build.sh
 @@ -0,0 +1,50 @@
 +#!/bin/bash
 +# Script to build libstd and prepare SafaOS's toolchain
 +set -eu
-+export VERSION="1.96.1"
++export VERSION="1.97.0"
 +export ARCH="x86_64"
 +
 +for arg in "$@"; do
@@ -167,6 +167,183 @@ index 000000000..fc4fd0da3
 +        options: base,
 +    }
 +}
+diff --git a/library/Cargo.lock b/library/Cargo.lock
+index 99e976517..8cb7625af 100644
+--- a/library/Cargo.lock
++++ b/library/Cargo.lock
+@@ -8,7 +8,7 @@ version = "0.25.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "1b5d307320b3181d6d7954e663bd7c774a838b8220fe0593c86d9fb09f498b4b"
+ dependencies = [
+- "gimli",
++ "gimli 0.32.3",
+  "rustc-std-workspace-alloc",
+  "rustc-std-workspace-core",
+ ]
+@@ -78,9 +78,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "dlmalloc"
+-version = "0.2.13"
++version = "0.2.14"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "9f5b01c17f85ee988d832c40e549a64bd89ab2c9f8d8a613bdf5122ae507e294"
++checksum = "ad5208a115eaba24916f7456929832e310a81518c641f93fee4f89aa93aa3675"
+ dependencies = [
+  "cfg-if",
+  "libc",
+@@ -123,6 +123,16 @@ dependencies = [
+  "rustc-std-workspace-core",
+ ]
+ 
++[[package]]
++name = "gimli"
++version = "0.33.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0bf7f043f89559805f8c7cacc432749b2fa0d0a0a9ee46ce47164ed5ba7f126c"
++dependencies = [
++ "rustc-std-workspace-alloc",
++ "rustc-std-workspace-core",
++]
++
+ [[package]]
+ name = "hashbrown"
+ version = "0.17.1"
+@@ -146,18 +156,18 @@ dependencies = [
+ 
+ [[package]]
+ name = "libc"
+-version = "0.2.185"
++version = "0.2.186"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "52ff2c0fe9bc6cb6b14a0592c2ff4fa9ceb83eea9db979b0487cd054946a2b8f"
++checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
+ dependencies = [
+  "rustc-std-workspace-core",
+ ]
+ 
+ [[package]]
+ name = "memchr"
+-version = "2.7.6"
++version = "2.8.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
++checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+ dependencies = [
+  "rustc-std-workspace-core",
+ ]
+@@ -250,18 +260,18 @@ dependencies = [
+ 
+ [[package]]
+ name = "rand"
+-version = "0.9.2"
++version = "0.9.4"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "6db2770f06117d490610c7488547d543617b21bfa07796d7a12f6f1bd53850d1"
++checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
+ dependencies = [
+  "rand_core",
+ ]
+ 
+ [[package]]
+ name = "rand_core"
+-version = "0.9.3"
++version = "0.9.5"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "99d9a13982dcf210057a8a78572b2217b667c3beacbf3a0d8b454f6f82837d38"
++checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
+ 
+ [[package]]
+ name = "rand_xorshift"
+@@ -274,9 +284,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "rustc-demangle"
+-version = "0.1.27"
++version = "0.1.28"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "b50b8869d9fc858ce7266cce0194bd74df58b9d0e3f6df3a9fc8eb470d95c09d"
++checksum = "b74b56ffa8bb2830709a538c2cbcae9aa062db0d2a42563bfb09bdaae44020eb"
+ dependencies = [
+  "rustc-std-workspace-core",
+ ]
+@@ -312,12 +322,41 @@ dependencies = [
+  "std",
+ ]
+ 
++[[package]]
++name = "safa-abi"
++version = "0.6.0"
++source = "git+https://github.com/SafaOS/safa-abi#ebc673e03122494f0ee50cc1810a7f80c9a58c78"
++dependencies = [
++ "rustc-std-workspace-alloc",
++ "rustc-std-workspace-core",
++]
++
++[[package]]
++name = "safa-api"
++version = "0.6.1"
++source = "git+https://github.com/SafaOS/safa-api#957455c55d4da2c8fbb6df89c25e317532e99daf"
++dependencies = [
++ "rustc-std-workspace-alloc",
++ "rustc-std-workspace-core",
++ "safa-abi",
++ "simpldns",
++]
++
+ [[package]]
+ name = "shlex"
+ version = "1.3.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
+ 
++[[package]]
++name = "simpldns"
++version = "0.1.0"
++source = "git+https://github.com/safiworks/simpldns#58d381cda22c2f2a045776b966a12d2e0d3868b7"
++dependencies = [
++ "rustc-std-workspace-alloc",
++ "rustc-std-workspace-core",
++]
++
+ [[package]]
+ name = "std"
+ version = "0.0.0"
+@@ -341,6 +380,7 @@ dependencies = [
+  "rand",
+  "rand_xorshift",
+  "rustc-demangle",
++ "safa-api",
+  "std_detect",
+  "unwind",
+  "vex-sdk",
+@@ -390,11 +430,11 @@ dependencies = [
+ 
+ [[package]]
+ name = "unwinding"
+-version = "0.2.8"
++version = "0.2.9"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "60612c845ef41699f39dc8c5391f252942c0a88b7d15da672eff0d14101bbd6d"
++checksum = "8ac8808f11429cd2a9323c960cfca5f3da45bcc5717cc82f51721a3f2213056d"
+ dependencies = [
+- "gimli",
++ "gimli 0.33.0",
+  "rustc-std-workspace-core",
+ ]
+ 
+@@ -419,9 +459,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "wasip2"
+-version = "1.0.3+wasi-0.2.9"
++version = "1.0.4+wasi-0.2.12"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "20064672db26d7cdc89c7798c48a0fdfac8213434a1186e5ef29fd560ae223d6"
++checksum = "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487"
+ dependencies = [
+  "rustc-std-workspace-alloc",
+  "rustc-std-workspace-core",
 diff --git a/library/alloc/Cargo.toml b/library/alloc/Cargo.toml
 index b32e5e991..c1d3bbe9c 100644
 --- a/library/alloc/Cargo.toml
@@ -1199,14 +1376,14 @@ index cc8cda9ae..4f0f12899 100644
          target_family = "wasm",
 diff --git a/library/std/src/sys/io/error/safaos.rs b/library/std/src/sys/io/error/safaos.rs
 new file mode 100644
-index 000000000..6dae1cde7
+index 000000000..c21beb8df
 --- /dev/null
 +++ b/library/std/src/sys/io/error/safaos.rs
 @@ -0,0 +1,34 @@
 +use safa_api::errors::ErrorStatus;
 +
 +use crate::io;
-+use crate::sys::io::RawOsError;
++use crate::io::RawOsError;
 +
 +pub fn errno() -> RawOsError {
 +    (ErrorStatus::Unknown as u16).into()
@@ -1254,10 +1431,10 @@ index 84b53fd37..c6bf227ba 100644
          pub use unsupported::*;
 diff --git a/library/std/src/sys/net/connection/safaos.rs b/library/std/src/sys/net/connection/safaos.rs
 new file mode 100644
-index 000000000..d5bf229c1
+index 000000000..9e36fe0ba
 --- /dev/null
 +++ b/library/std/src/sys/net/connection/safaos.rs
-@@ -0,0 +1,509 @@
+@@ -0,0 +1,517 @@
 +use core::net::SocketAddrV4;
 +use core::num::NonZero;
 +
@@ -1292,6 +1469,14 @@ index 000000000..d5bf229c1
 +    }
 +
 +    pub fn set_write_timeout(&self, _: Option<Duration>) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn set_keepalive(&self, _keepalive: bool) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn keepalive(&self) -> io::Result<bool> {
 +        self.0
 +    }
 +
@@ -2787,10 +2972,10 @@ index 3eb20dae0..4eea5a98b 100644
          use unsupported as imp;
 diff --git a/library/std/src/sys/process/safaos.rs b/library/std/src/sys/process/safaos.rs
 new file mode 100644
-index 000000000..02328af27
+index 000000000..a907797c1
 --- /dev/null
 +++ b/library/std/src/sys/process/safaos.rs
-@@ -0,0 +1,440 @@
+@@ -0,0 +1,444 @@
 +use super::env::{CommandEnv, CommandEnvs};
 +pub use crate::ffi::OsString as EnvKey;
 +use crate::ffi::{OsStr, OsString};
@@ -2805,6 +2990,7 @@ index 000000000..02328af27
 +use crate::{fmt, io};
 +use safa_api::errors::SysResult;
 +use safa_api::process::stdio::{sysget_stderr, sysget_stdin, sysget_stdout};
++use crate::sys::process::CommandResolvedEnvs;
 +
 +use crate::sys::pal::resources::FileDesc;
 +
@@ -2925,8 +3111,11 @@ index 000000000..02328af27
 +    }
 +
 +    pub fn get_env_clear(&self) -> bool {
-+        // FIXME: Implement custom Env
-+        false
++        self.env.does_clear()
++    }
++
++    pub fn get_resolved_envs(&self) -> CommandResolvedEnvs {
++        CommandResolvedEnvs::new(self.env.capture())
 +    }
 +
 +    pub fn get_current_dir(&self) -> Option<&Path> {

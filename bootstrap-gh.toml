@@ -54,9 +54,9 @@ musl-libdir="/usr/lib/x86_64-linux-musl"
 
 [target.aarch64-unknown-linux-musl]
 cc = "musl-gcc"
-cxx = "safaos-x86_64-g++"
+cxx = "safaos-aarch64-g++"
 linker = "musl-gcc"
 
-musl-root="/usr/lib/x86_64-linux-musl"
-musl-libdir="/usr/lib/x86_64-linux-musl"
+musl-root="/usr/lib/aarch64-linux-musl"
+musl-libdir="/usr/lib/aarch64-linux-musl"
 
