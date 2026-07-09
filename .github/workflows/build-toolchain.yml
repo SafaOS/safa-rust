@@ -71,8 +71,67 @@ jobs:
         run: |
           brew install python3 ninja cmake
 
+      # --- Cross C toolchains for BOTH safaos arches, on every host ---
+      # compiler_builtins' build script sometimes needs to compile a compiler-rt
+      # C source for the *target* arch. Left to its own devices, cc-rs falls back
+      # to whatever "cc" is on PATH -- the host's native compiler (or, on macOS,
+      # Apple's system Clang, which doesn't reliably handle an unfamiliar custom
+      # OS triple like x86_64-unknown-safaos). That breaks any time host arch !=
+      # target arch, on every platform, the same way.
+      #
+      # Fix: install a real cross toolchain per host OS, then symlink it to
+      # FIXED names (safaos-x86_64-gcc / safaos-aarch64-gcc / ...) that are
+      # identical across platforms. bootstrap-gh.toml only ever references
+      # these fixed names, so it stays a single static file with no per-OS
+      # branching, regardless of which actual toolchain backs them.
+      - name: Install and wire up safaos cross toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          bindir="$HOME/safaos-cross/bin"
+          mkdir -p "$bindir"
+          echo "$bindir" >> "$GITHUB_PATH"
+
+          link() { # link <real-binary> <fixed-name>
+            local real fixed
+            real="$(command -v "$1")"
+            fixed="$2"
+            ln -sf "$real" "$bindir/$fixed"
+          }
+
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y \
+              gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+              gcc-x86-64-linux-gnu g++-x86-64-linux-gnu
+
+            link aarch64-linux-gnu-gcc safaos-aarch64-gcc
+            link aarch64-linux-gnu-g++ safaos-aarch64-g++
+            link aarch64-linux-gnu-ar  safaos-aarch64-ar
+
+            link x86_64-linux-gnu-gcc safaos-x86_64-gcc
+            link x86_64-linux-gnu-g++ safaos-x86_64-g++
+            link x86_64-linux-gnu-ar  safaos-x86_64-ar
+
+          elif [[ "${{ runner.os }}" == "macOS" ]]; then
+            brew tap messense/macos-cross-toolchains
+            brew install aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu
+
+            link aarch64-unknown-linux-gnu-gcc safaos-aarch64-gcc
+            link aarch64-unknown-linux-gnu-g++ safaos-aarch64-g++
+            link aarch64-unknown-linux-gnu-ar  safaos-aarch64-ar
+
+            link x86_64-unknown-linux-gnu-gcc safaos-x86_64-gcc
+            link x86_64-unknown-linux-gnu-g++ safaos-x86_64-g++
+            link x86_64-unknown-linux-gnu-ar  safaos-x86_64-ar
+          fi
+
       - name: Clone rust source and apply patches
         run: bash clone.sh
+
+      - name: Use CI bootstrap config
+        working-directory: rust
+        run: cp ../bootstrap-gh.toml bootstrap.toml
 
       # ------------------------------------------------------------------
       # Build the host toolchain once, then install it per safaos target.

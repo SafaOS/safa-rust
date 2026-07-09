@@ -31,3 +31,20 @@ incremental = true
 
 # [target.x86_64-unknown-safaos]
 # llvm-config = "/usr/bin/llvm-config"
+
+[target.aarch64-unknown-safaos]
+cc = "safaos-aarch64-gcc"
+cxx = "safaos-aarch64-g++"
+ar = "safaos-aarch64-ar"
+linker = "safaos-aarch64-gcc"
+
+[target.x86_64-unknown-safaos]
+cc = "safaos-x86_64-gcc"
+cxx = "safaos-x86_64-g++"
+ar = "safaos-x86_64-ar"
+linker = "safaos-x86_64-gcc"
+
+[target.x86_64-unknown-linux-musl]
+cc = "x86_64-linux-musl-gcc"
+cxx = "x86_64-linux-musl-g++"
+linker = "x86_64-linux-musl-gcc"
