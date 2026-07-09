@@ -11,6 +11,7 @@ download-ci-llvm = true
 [gcc]
 
 [build]
+submodules = false
 
 # Arguments passed to the `./configure` script, used during distcheck. You
 # probably won't fill this in but rather it's filled in by the `./configure`

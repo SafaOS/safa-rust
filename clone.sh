@@ -12,3 +12,4 @@ git switch -c safa-stable
 git apply ../*.patch
 
 cp ../bootstrap-gh.toml bootstrap.toml
+git submodule update --init --depth 1 --recursive
