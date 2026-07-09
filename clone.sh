@@ -6,8 +6,8 @@ cd rust
 git init
 git remote add origin https://github.com/rust-lang/rust
 
-git fetch --filter=blob:none origin 31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd
-git checkout 31fca3a
+git fetch --filter=blob:none origin 2d8144b7880597b6e6d3dfd63a9a9efae3f533d3
+git checkout 2d8144b78
 git switch -c safa-stable
 git apply ../*.patch
 
