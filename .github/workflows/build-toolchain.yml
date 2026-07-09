@@ -59,17 +59,7 @@ jobs:
         if: matrix.host_triple == 'x86_64-unknown-linux-musl'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential python3 curl git ninja-build cmake
-
-          curl --retry 5 --retry-delay 5 --retry-all-errors \
-               --connect-timeout 15 --max-time 120 \
-               -L https://musl.cc/x86_64-linux-musl-cross.tgz -o /tmp/musl-cross.tgz
-
-          # Extracted to a FIXED path (not $GITHUB_WORKSPACE/$HOME, which vary)
-          # so bootstrap-gh.toml can reference musl-root as a plain static value.
-          sudo mkdir -p /opt
-          sudo tar -C /opt -xzf /tmp/musl-cross.tgz
-          echo "/opt/x86_64-linux-musl-cross/bin" >> "$GITHUB_PATH"
+          sudo apt-get install -y build-essential python3 curl git ninja-build cmake musl-tools musl-dev clang
 
       # --- macOS host deps ---
       - name: Install macOS build deps
