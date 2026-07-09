@@ -45,6 +45,11 @@ ar = "safaos-x86_64-ar"
 linker = "safaos-x86_64-gcc"
 
 [target.x86_64-unknown-linux-musl]
-cc = "clang --target=x86_64-unknown-linux-musl"
-cxx = "clang --target=x86_64-unknown-linux-musl -x c++"
-linker = "clang --target=x86_64-unknown-linux-musl"
+cc = "musl-gcc"
+cxx = "safaos-x86_64-g++"
+linker = "musl-gcc"
+
+[target.aarch64-unknown-linux-musl]
+cc = "musl-gcc"
+cxx = "safaos-x86_64-g++"
+linker = "musl-gcc"
