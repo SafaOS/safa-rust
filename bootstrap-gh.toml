@@ -1,0 +1,32 @@
+change-id = "ignore"
+# Use different pre-set defaults than the global defaults.
+#
+# See `src/bootstrap/defaults` for more information.
+# Note that this has no default value (x.py uses the defaults in `bootstrap.example.toml`).
+profile = 'dist'
+
+[llvm]
+download-ci-llvm = true
+
+[gcc]
+
+[build]
+
+# Arguments passed to the `./configure` script, used during distcheck. You
+# probably won't fill this in but rather it's filled in by the `./configure`
+# script. Useful for debugging.
+configure-args = []
+
+[install]
+
+[rust]
+std-features = ["compiler-builtins-c", "compiler-builtins-mem"]
+incremental = true
+
+[dist]
+
+# [target.x86_64-unknown-linux-gnu]
+# llvm-config = "/usr/bin/llvm-config"
+
+# [target.x86_64-unknown-safaos]
+# llvm-config = "/usr/bin/llvm-config"

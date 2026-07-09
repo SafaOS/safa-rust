@@ -1,0 +1,3953 @@
+diff --git a/build.sh b/build.sh
+new file mode 100755
+index 00000000..4da9b498
+--- /dev/null
++++ b/build.sh
+@@ -0,0 +1,50 @@
++#!/bin/bash
++# Script to build libstd and prepare SafaOS's toolchain
++set -eu
++export VERSION="1.96.1"
++export ARCH="x86_64"
++
++for arg in "$@"; do
++    case $arg in
++        -a|--arch)
++            ARCH="$2"
++            break
++            ;;
++        *)
++            echo "Unknown argument: $arg"
++            exit 1
++            ;;
++    esac
++    shift
++done
++
++
++if [[ "$ARCH" == "aarch64" ]]; then
++    export CROSS_COMPILE="aarch64-linux-gnu"
++fi
++
++echo "Building for arch $ARCH, NOTE THAT to compile aarch64 you need aarch64-linux-gnu-gcc, for now it is only designed for cross compiling"
++
++export TARGET_DIR="$(rustc "+$VERSION" --print sysroot)/lib/rustlib/$ARCH-unknown-safaos"
++export TARGET_DIR_LIB="$TARGET_DIR/lib"
++mkdir -p $TARGET_DIR_LIB
++
++cp "target-$ARCH.json" "$TARGET_DIR/target.json"
++
++export CARGO_PROFILE_RELEASE_DEBUG=0
++export CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true
++export CARGO_PROFILE_RELEASE_OPT_LEVEL="3"
++export RUSTC_BOOTSTRAP=1
++export RUSTFLAGS="-Cforce-unwind-tables=yes -Cembed-bitcode=yes -Zforce-unstable-if-unmarked -Zunstable-options"
++export __CARGO_DEFAULT_LIB_METADATA="stablestd"
++export RUST_COMPILER_RT_ROOT="$(pwd)/src/llvm-project/compiler-rt"
++
++cargo "+$VERSION" build --target "$ARCH-unknown-safaos" -Zbinary-dep-depinfo \
++          --release \
++          --features "compiler-builtins-c compiler-builtins-mem" \
++          --manifest-path "library/sysroot/Cargo.toml"
++
++rm -f $TARGET_DIR_LIB/*.rlib
++cp library/target/$ARCH-unknown-safaos/release/deps/*.rlib $TARGET_DIR_LIB
++rm -rf "$ARCH-unknown-safaos-toolchain"
++cp -r $TARGET_DIR "$ARCH-unknown-safaos-toolchain"
+diff --git a/compiler/rustc_target/src/spec/base/mod.rs b/compiler/rustc_target/src/spec/base/mod.rs
+index 9e7ff620..fe5a374f 100644
+--- a/compiler/rustc_target/src/spec/base/mod.rs
++++ b/compiler/rustc_target/src/spec/base/mod.rs
+@@ -29,6 +29,7 @@
+ pub(crate) mod nto_qnx;
+ pub(crate) mod openbsd;
+ pub(crate) mod redox;
++pub(crate) mod safaos;
+ pub(crate) mod solaris;
+ pub(crate) mod solid;
+ pub(crate) mod teeos;
+diff --git a/compiler/rustc_target/src/spec/base/safaos.rs b/compiler/rustc_target/src/spec/base/safaos.rs
+new file mode 100644
+index 00000000..75b6fef8
+--- /dev/null
++++ b/compiler/rustc_target/src/spec/base/safaos.rs
+@@ -0,0 +1,14 @@
++use crate::spec::{Cc, LinkerFlavor, Lld, Os, PanicStrategy, RelroLevel, TargetOptions};
++
++pub(crate) fn opts() -> TargetOptions {
++    TargetOptions {
++        os: Os::SafaOs,
++        linker_flavor: LinkerFlavor::Gnu(Cc::No, Lld::Yes),
++        linker: Some("rust-lld".into()),
++        executables: true,
++        relro_level: RelroLevel::Full,
++        panic_strategy: PanicStrategy::Abort,
++        has_thread_local: true,
++        ..Default::default()
++    }
++}
+diff --git a/compiler/rustc_target/src/spec/mod.rs b/compiler/rustc_target/src/spec/mod.rs
+index 0601f9d7..f9770031 100644
+--- a/compiler/rustc_target/src/spec/mod.rs
++++ b/compiler/rustc_target/src/spec/mod.rs
+@@ -1578,6 +1578,9 @@ fn $module() {
+     ("riscv64gc-unknown-redox", riscv64gc_unknown_redox),
+     ("x86_64-unknown-redox", x86_64_unknown_redox),
+ 
++    ("aarch64-unknown-safaos", aarch64_unknown_safaos),
++    ("x86_64-unknown-safaos", x86_64_unknown_safaos),
++
+     ("x86_64-unknown-managarm-mlibc", x86_64_unknown_managarm_mlibc),
+     ("aarch64-unknown-managarm-mlibc", aarch64_unknown_managarm_mlibc),
+     ("riscv64gc-unknown-managarm-mlibc", riscv64gc_unknown_managarm_mlibc),
+@@ -2016,6 +2019,7 @@ pub enum Os {
+         Windows = "windows",
+         Xous = "xous",
+         Zkvm = "zkvm",
++        SafaOs = "safaos",
+         Unknown = "unknown",
+     }
+     other_variant = Other;
+diff --git a/compiler/rustc_target/src/spec/targets/aarch64_unknown_safaos.rs b/compiler/rustc_target/src/spec/targets/aarch64_unknown_safaos.rs
+new file mode 100644
+index 00000000..7b7cd7c9
+--- /dev/null
++++ b/compiler/rustc_target/src/spec/targets/aarch64_unknown_safaos.rs
+@@ -0,0 +1,22 @@
++use crate::spec::{Arch, StackProbeType, Target, TargetMetadata, base};
++
++pub(crate) fn target() -> Target {
++    let mut base = base::safaos::opts();
++    base.max_atomic_width = Some(128);
++    base.stack_probes = StackProbeType::Inline;
++    base.features = "+v8a".into();
++
++    Target {
++        llvm_target: "aarch64-unknown-safaos".into(),
++        metadata: TargetMetadata {
++            description: Some("ARM64 SafaOS".into()),
++            tier: Some(3),
++            host_tools: Some(false),
++            std: Some(true),
++        },
++        pointer_width: 64,
++        data_layout: "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32".into(),
++        arch: Arch::AArch64,
++        options: base,
++    }
++}
+diff --git a/compiler/rustc_target/src/spec/targets/x86_64_unknown_safaos.rs b/compiler/rustc_target/src/spec/targets/x86_64_unknown_safaos.rs
+new file mode 100644
+index 00000000..fc4fd0da
+--- /dev/null
++++ b/compiler/rustc_target/src/spec/targets/x86_64_unknown_safaos.rs
+@@ -0,0 +1,25 @@
++use crate::spec::{Arch, StackProbeType, Target, TargetMetadata, base};
++
++pub(crate) fn target() -> Target {
++    let mut base = base::safaos::opts();
++    base.cpu = "x86-64".into();
++    base.plt_by_default = false;
++    base.max_atomic_width = Some(64);
++    base.stack_probes = StackProbeType::Inline;
++    base.features = "+mmx,+sse2,+sse3,+sse,-avx,-sse4.1,-sse4.2,-ssse3".into();
++
++    Target {
++        llvm_target: "x86_64-unknown-safaos".into(),
++        metadata: TargetMetadata {
++            description: Some("SafaOS".into()),
++            tier: Some(3),
++            host_tools: Some(false),
++            std: Some(true),
++        },
++        pointer_width: 64,
++        data_layout:
++            "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128".into(),
++        arch: Arch::X86_64,
++        options: base,
++    }
++}
+diff --git a/library/Cargo.lock b/library/Cargo.lock
+index ffa9a630..ddeb369e 100644
+--- a/library/Cargo.lock
++++ b/library/Cargo.lock
+@@ -8,7 +8,7 @@ version = "0.25.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "1b5d307320b3181d6d7954e663bd7c774a838b8220fe0593c86d9fb09f498b4b"
+ dependencies = [
+- "gimli",
++ "gimli 0.32.3",
+  "rustc-std-workspace-alloc",
+  "rustc-std-workspace-core",
+ ]
+@@ -78,9 +78,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "dlmalloc"
+-version = "0.2.11"
++version = "0.2.14"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "06cdfe340b16dd990c54cce79743613fa09fbb16774f33a77c9fd196f8f3fa30"
++checksum = "ad5208a115eaba24916f7456929832e310a81518c641f93fee4f89aa93aa3675"
+ dependencies = [
+  "cfg-if",
+  "libc",
+@@ -123,6 +123,16 @@ dependencies = [
+  "rustc-std-workspace-core",
+ ]
+ 
++[[package]]
++name = "gimli"
++version = "0.33.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0bf7f043f89559805f8c7cacc432749b2fa0d0a0a9ee46ce47164ed5ba7f126c"
++dependencies = [
++ "rustc-std-workspace-alloc",
++ "rustc-std-workspace-core",
++]
++
+ [[package]]
+ name = "hashbrown"
+ version = "0.16.1"
+@@ -146,18 +156,18 @@ dependencies = [
+ 
+ [[package]]
+ name = "libc"
+-version = "0.2.183"
++version = "0.2.186"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
++checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
+ dependencies = [
+  "rustc-std-workspace-core",
+ ]
+ 
+ [[package]]
+ name = "memchr"
+-version = "2.7.6"
++version = "2.8.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
++checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+ dependencies = [
+  "rustc-std-workspace-core",
+ ]
+@@ -250,18 +260,18 @@ dependencies = [
+ 
+ [[package]]
+ name = "rand"
+-version = "0.9.2"
++version = "0.9.4"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "6db2770f06117d490610c7488547d543617b21bfa07796d7a12f6f1bd53850d1"
++checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
+ dependencies = [
+  "rand_core",
+ ]
+ 
+ [[package]]
+ name = "rand_core"
+-version = "0.9.3"
++version = "0.9.5"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "99d9a13982dcf210057a8a78572b2217b667c3beacbf3a0d8b454f6f82837d38"
++checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
+ 
+ [[package]]
+ name = "rand_xorshift"
+@@ -312,12 +322,41 @@ dependencies = [
+  "std",
+ ]
+ 
++[[package]]
++name = "safa-abi"
++version = "0.6.0"
++source = "git+https://github.com/SafaOS/safa-abi#ebc673e03122494f0ee50cc1810a7f80c9a58c78"
++dependencies = [
++ "rustc-std-workspace-alloc",
++ "rustc-std-workspace-core",
++]
++
++[[package]]
++name = "safa-api"
++version = "0.6.1"
++source = "git+https://github.com/SafaOS/safa-api#957455c55d4da2c8fbb6df89c25e317532e99daf"
++dependencies = [
++ "rustc-std-workspace-alloc",
++ "rustc-std-workspace-core",
++ "safa-abi",
++ "simpldns",
++]
++
+ [[package]]
+ name = "shlex"
+ version = "1.3.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
+ 
++[[package]]
++name = "simpldns"
++version = "0.1.0"
++source = "git+https://github.com/safiworks/simpldns#58d381cda22c2f2a045776b966a12d2e0d3868b7"
++dependencies = [
++ "rustc-std-workspace-alloc",
++ "rustc-std-workspace-core",
++]
++
+ [[package]]
+ name = "std"
+ version = "0.0.0"
+@@ -341,6 +380,7 @@ dependencies = [
+  "rand",
+  "rand_xorshift",
+  "rustc-demangle",
++ "safa-api",
+  "std_detect",
+  "unwind",
+  "vex-sdk",
+@@ -389,11 +429,11 @@ dependencies = [
+ 
+ [[package]]
+ name = "unwinding"
+-version = "0.2.8"
++version = "0.2.9"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "60612c845ef41699f39dc8c5391f252942c0a88b7d15da672eff0d14101bbd6d"
++checksum = "8ac8808f11429cd2a9323c960cfca5f3da45bcc5717cc82f51721a3f2213056d"
+ dependencies = [
+- "gimli",
++ "gimli 0.33.0",
+  "rustc-std-workspace-core",
+ ]
+ 
+@@ -439,78 +479,13 @@ checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
+ 
+ [[package]]
+ name = "windows-sys"
+-version = "0.60.2"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "f2f500e4d28234f72040990ec9d39e3a6b950f9f22d3dba18416c35882612bcb"
+-dependencies = [
+- "windows-targets",
+-]
+-
+-[[package]]
+-name = "windows-targets"
+-version = "0.53.5"
++version = "0.61.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "4945f9f551b88e0d65f3db0bc25c33b8acea4d9e41163edf90dcd0b19f9069f3"
++checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
+ dependencies = [
+  "windows-link 0.2.1",
+- "windows_aarch64_gnullvm",
+- "windows_aarch64_msvc",
+- "windows_i686_gnu",
+- "windows_i686_gnullvm",
+- "windows_i686_msvc",
+- "windows_x86_64_gnu",
+- "windows_x86_64_gnullvm",
+- "windows_x86_64_msvc",
+ ]
+ 
+-[[package]]
+-name = "windows_aarch64_gnullvm"
+-version = "0.53.1"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "a9d8416fa8b42f5c947f8482c43e7d89e73a173cead56d044f6a56104a6d1b53"
+-
+-[[package]]
+-name = "windows_aarch64_msvc"
+-version = "0.53.1"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "b9d782e804c2f632e395708e99a94275910eb9100b2114651e04744e9b125006"
+-
+-[[package]]
+-name = "windows_i686_gnu"
+-version = "0.53.1"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "960e6da069d81e09becb0ca57a65220ddff016ff2d6af6a223cf372a506593a3"
+-
+-[[package]]
+-name = "windows_i686_gnullvm"
+-version = "0.53.1"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "fa7359d10048f68ab8b09fa71c3daccfb0e9b559aed648a8f95469c27057180c"
+-
+-[[package]]
+-name = "windows_i686_msvc"
+-version = "0.53.1"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "1e7ac75179f18232fe9c285163565a57ef8d3c89254a30685b57d83a38d326c2"
+-
+-[[package]]
+-name = "windows_x86_64_gnu"
+-version = "0.53.1"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "9c3842cdd74a865a8066ab39c8a7a473c0778a3f29370b5fd6b4b9aa7df4a499"
+-
+-[[package]]
+-name = "windows_x86_64_gnullvm"
+-version = "0.53.1"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "0ffa179e2d07eee8ad8f57493436566c7cc30ac536a3379fdf008f47f6bb7ae1"
+-
+-[[package]]
+-name = "windows_x86_64_msvc"
+-version = "0.53.1"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
+-
+ [[package]]
+ name = "wit-bindgen"
+ version = "0.45.1"
+diff --git a/library/alloc/Cargo.toml b/library/alloc/Cargo.toml
+index b32e5e99..c1d3bbe9 100644
+--- a/library/alloc/Cargo.toml
++++ b/library/alloc/Cargo.toml
+@@ -27,6 +27,7 @@ optimize_for_size = ["core/optimize_for_size"]
+ [lints.rust.unexpected_cfgs]
+ level = "warn"
+ check-cfg = [
++    'cfg(target_os, values("safaos"))',
+     'cfg(no_global_oom_handling)',
+     'cfg(no_rc)',
+     'cfg(no_sync)',
+diff --git a/library/core/Cargo.toml b/library/core/Cargo.toml
+index 8f435dd7..93fbee51 100644
+--- a/library/core/Cargo.toml
++++ b/library/core/Cargo.toml
+@@ -29,6 +29,7 @@ llvm_enzyme = []
+ level = "warn"
+ check-cfg = [
+     'cfg(no_fp_fmt_parse)',
++    'cfg(target_os, values("safaos"))',
+     # core use #[path] imports to portable-simd `core_simd` crate
+     # and to stdarch `core_arch` crate which messes-up with Cargo list
+     # of declared features, we therefor expect any feature cfg
+diff --git a/library/panic_abort/Cargo.toml b/library/panic_abort/Cargo.toml
+index ecf043ac..3433149d 100644
+--- a/library/panic_abort/Cargo.toml
++++ b/library/panic_abort/Cargo.toml
+@@ -19,3 +19,10 @@ libc = { version = "0.2", default-features = false }
+ 
+ [target.'cfg(any(target_os = "android", target_os = "zkvm"))'.dependencies]
+ alloc = { path = "../alloc" }
++
++[lints.rust.unexpected_cfgs]
++level = "warn"
++check-cfg = [
++    'cfg(bootstrap)',
++    'cfg(target_os, values("safaos"))',
++]
+diff --git a/library/panic_unwind/Cargo.toml b/library/panic_unwind/Cargo.toml
+index 67fc919c..a4f12077 100644
+--- a/library/panic_unwind/Cargo.toml
++++ b/library/panic_unwind/Cargo.toml
+@@ -21,4 +21,8 @@ libc = { version = "0.2", default-features = false }
+ 
+ [lints.rust.unexpected_cfgs]
+ level = "warn"
+-check-cfg = ['cfg(emscripten_wasm_eh)']
++check-cfg = [
++    'cfg(emscripten_wasm_eh)',
++    'cfg(bootstrap)',
++    'cfg(target_os, values("safaos"))',
++]
+diff --git a/library/panic_unwind/src/lib.rs b/library/panic_unwind/src/lib.rs
+index fc0a627d..a92e165e 100644
+--- a/library/panic_unwind/src/lib.rs
++++ b/library/panic_unwind/src/lib.rs
+@@ -41,6 +41,10 @@
+         #[path = "hermit.rs"]
+         mod imp;
+     }
++    target_os = "safaos" => {
++        #[path = "safaos.rs"]
++        mod imp;
++    }
+     target_os = "l4re" => {
+         // L4Re is unix family but does not yet support unwinding.
+         #[path = "dummy.rs"]
+diff --git a/library/panic_unwind/src/safaos.rs b/library/panic_unwind/src/safaos.rs
+new file mode 100644
+index 00000000..a45c68d1
+--- /dev/null
++++ b/library/panic_unwind/src/safaos.rs
+@@ -0,0 +1,24 @@
++//! Unwinding for safaos target.
++//!
++//! Right now we don't support this, so this is just stubs.
++
++use alloc::boxed::Box;
++use core::any::Any;
++
++pub(crate) unsafe fn cleanup(_ptr: *mut u8) -> Box<dyn Any + Send> {
++    unsafe extern "C" {
++        fn __rust_abort() -> !;
++    }
++    unsafe {
++        __rust_abort();
++    }
++}
++
++pub(crate) unsafe fn panic(_data: Box<dyn Any + Send>) -> u32 {
++    unsafe extern "C" {
++        fn __rust_abort() -> !;
++    }
++    unsafe {
++        __rust_abort();
++    }
++}
+diff --git a/library/std/Cargo.toml b/library/std/Cargo.toml
+index f7bc7295..fc1a7a9c 100644
+--- a/library/std/Cargo.toml
++++ b/library/std/Cargo.toml
+@@ -102,6 +102,12 @@ vex-sdk = { version = "0.27.0", features = [
+     'rustc-dep-of-std',
+ ], default-features = false }
+ 
++
++[target.'cfg(target_os = "safaos")'.dependencies]
++safa-api = { version = "0.6.0", git = "https://github.com/SafaOS/safa-api", features = [
++    'rustc-dep-of-std',
++], public = true }
++
+ [features]
+ backtrace = [
+     'addr2line/rustc-dep-of-std',
+@@ -158,6 +164,8 @@ test = true
+ [lints.rust.unexpected_cfgs]
+ level = "warn"
+ check-cfg = [
++    'cfg(bootstrap)',
++    'cfg(target_os, values("safaos"))',
+     # std use #[path] imports to portable-simd `std_float` crate
+     # and to the `backtrace` crate which messes-up with Cargo list
+     # of declared features, we therefor expect any feature cfg
+diff --git a/library/std/build.rs b/library/std/build.rs
+index 5f2e441b..6ca8e4ef 100644
+--- a/library/std/build.rs
++++ b/library/std/build.rs
+@@ -57,6 +57,7 @@ fn main() {
+         || target_os == "nuttx"
+         || target_os == "cygwin"
+         || target_os == "vexos"
++        || target_os == "safaos"
+ 
+         // See src/bootstrap/src/core/build_steps/synthetic_targets.rs
+         || env::var("RUSTC_BOOTSTRAP_SYNTHETIC_TARGET").is_ok()
+diff --git a/library/std/src/os/mod.rs b/library/std/src/os/mod.rs
+index 76374402..98d6bffa 100644
+--- a/library/std/src/os/mod.rs
++++ b/library/std/src/os/mod.rs
+@@ -169,6 +169,8 @@ pub mod windows {}
+ pub mod redox;
+ #[cfg(target_os = "rtems")]
+ pub mod rtems;
++#[cfg(target_os = "safaos")]
++pub mod safaos;
+ #[cfg(target_os = "solaris")]
+ pub mod solaris;
+ #[cfg(target_os = "solid_asp3")]
+diff --git a/library/std/src/os/safaos/io.rs b/library/std/src/os/safaos/io.rs
+new file mode 100644
+index 00000000..6409ae73
+--- /dev/null
++++ b/library/std/src/os/safaos/io.rs
+@@ -0,0 +1,27 @@
++use safa_api::syscalls;
++
++use crate::fs::File;
++
++use super::{AsRawResource, FromRawResource};
++
++#[stable(feature = "rust1", since = "1.0.0")]
++pub trait IoUtils {
++    #[stable(feature = "rust1", since = "1.0.0")]
++    /// Sends command `command` with argument `arg` to the resource `self`
++    fn send_command(&self, command: u16, arg: u64) -> crate::io::Result<()>;
++}
++
++#[stable(feature = "rust1", since = "1.0.0")]
++impl IoUtils for File {
++    fn send_command(&self, command: u16, arg: u64) -> crate::io::Result<()> {
++        let ri = self.as_raw_resource();
++        syscalls::io::io_command(ri, command, arg).map_err(|e| e.into())
++    }
++}
++
++/// Creates a new VTTY pair of (mother, child) file descriptors.
++#[stable(feature = "io_create_vtty", since = "1.75.0")]
++pub fn create_vtty() -> crate::io::Result<(File, File)> {
++    let (mother, child) = syscalls::io::vtty_alloc()?;
++    unsafe { Ok((File::from_raw_resource(mother), File::from_raw_resource(child))) }
++}
+diff --git a/library/std/src/os/safaos/mod.rs b/library/std/src/os/safaos/mod.rs
+new file mode 100644
+index 00000000..0de2a9e8
+--- /dev/null
++++ b/library/std/src/os/safaos/mod.rs
+@@ -0,0 +1,83 @@
++#![stable(feature = "rust1", since = "1.0.0")]
++#[stable(feature = "rust1", since = "1.0.0")]
++pub mod io;
++#[stable(feature = "rust1", since = "1.0.0")]
++pub mod process;
++
++#[unstable(feature = "rustc_private", issue = "27812")]
++pub use safa_api as api;
++
++use safa_api::errors::ErrorStatus;
++#[stable(feature = "safa_api", since = "1.0.0")]
++pub use safa_api::*;
++
++use crate::{
++    fs::File,
++    sys::resources::FileDesc,
++    sys::{AsInner, FromInner},
++};
++
++#[inline(always)]
++pub(crate) const fn into_io_error_kind(err: ErrorStatus) -> crate::io::ErrorKind {
++    const fn unknown_err() -> crate::io::ErrorKind {
++        crate::io::ErrorKind::Uncategorized
++    }
++    safa_api::err_into_io_error_kind!(err, crate::io::ErrorKind);
++}
++
++#[stable(feature = "rust1", since = "1.0.0")]
++pub use crate::sys::resources::ResourceID;
++
++#[stable(feature = "rust1", since = "1.0.0")]
++/// A trait to express something that can be converted into a raw resource
++pub trait AsRawResource {
++    #[stable(feature = "rust1", since = "1.0.0")]
++    /// Returns the raw resource ID for this object.
++    fn as_raw_resource(&self) -> ResourceID;
++}
++
++#[stable(feature = "rust1", since = "1.0.0")]
++/// A trait to express something that can be converted from a raw resource
++pub trait FromRawResource {
++    #[stable(feature = "rust1", since = "1.0.0")]
++    /// Returns the object for this raw resource ID, can take ownership of the resource.
++    /// # Safety
++    /// resource must be valid and this may take ownership of the resource.
++    unsafe fn from_raw_resource(resource: ResourceID) -> Self;
++}
++
++#[stable(feature = "rust1", since = "1.0.0")]
++impl AsRawResource for File {
++    fn as_raw_resource(&self) -> ResourceID {
++        self.as_inner().0.fd.0
++    }
++}
++
++#[stable(feature = "rust1", since = "1.0.0")]
++impl AsRawResource for crate::io::Stdout {
++    fn as_raw_resource(&self) -> ResourceID {
++        safa_api::process::stdio::sysget_stdout()
++    }
++}
++
++#[stable(feature = "rust1", since = "1.0.0")]
++impl AsRawResource for crate::io::Stderr {
++    fn as_raw_resource(&self) -> ResourceID {
++        safa_api::process::stdio::sysget_stderr()
++    }
++}
++
++#[stable(feature = "rust1", since = "1.0.0")]
++impl AsRawResource for crate::io::Stdin {
++    fn as_raw_resource(&self) -> ResourceID {
++        safa_api::process::stdio::sysget_stdin()
++    }
++}
++
++#[stable(feature = "rust1", since = "1.0.0")]
++impl FromRawResource for File {
++    unsafe fn from_raw_resource(resource: ResourceID) -> Self {
++        let inner = crate::sys::fs::File::from_raw(FileDesc::from_raw(resource));
++        FromInner::from_inner(inner)
++    }
++}
+diff --git a/library/std/src/os/safaos/process.rs b/library/std/src/os/safaos/process.rs
+new file mode 100644
+index 00000000..2e45ce14
+--- /dev/null
++++ b/library/std/src/os/safaos/process.rs
+@@ -0,0 +1,2 @@
++// #[stable(feature = "rust1", since = "1.0.0")]
++// pub use crate::sys::process::ExitCode;
+diff --git a/library/std/src/sys/alloc/mod.rs b/library/std/src/sys/alloc/mod.rs
+index f2f1d1c7..d3d073ab 100644
+--- a/library/std/src/sys/alloc/mod.rs
++++ b/library/std/src/sys/alloc/mod.rs
+@@ -107,4 +107,7 @@ unsafe fn realloc_fallback(
+     target_os = "zkvm" => {
+         mod zkvm;
+     }
++    target_os = "safaos" => {
++        mod safaos;
++    }
+ }
+diff --git a/library/std/src/sys/alloc/safaos.rs b/library/std/src/sys/alloc/safaos.rs
+new file mode 100644
+index 00000000..a6bef5d8
+--- /dev/null
++++ b/library/std/src/sys/alloc/safaos.rs
+@@ -0,0 +1,24 @@
++use safa_api::alloc::GLOBAL_SYSTEM_ALLOCATOR;
++
++use crate::alloc::{GlobalAlloc, Layout, System};
++
++#[stable(feature = "alloc_system_type", since = "1.28.0")]
++unsafe impl GlobalAlloc for System {
++    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
++        let results = unsafe { GLOBAL_SYSTEM_ALLOCATOR.alloc(layout) };
++        results
++    }
++    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
++        unsafe {
++            GLOBAL_SYSTEM_ALLOCATOR.dealloc(ptr, layout);
++        }
++    }
++
++    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
++        unsafe { GLOBAL_SYSTEM_ALLOCATOR.alloc_zeroed(layout) }
++    }
++
++    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
++        unsafe { GLOBAL_SYSTEM_ALLOCATOR.realloc(ptr, layout, new_size) }
++    }
++}
+diff --git a/library/std/src/sys/args/mod.rs b/library/std/src/sys/args/mod.rs
+index 5424d40a..3a024949 100644
+--- a/library/std/src/sys/args/mod.rs
++++ b/library/std/src/sys/args/mod.rs
+@@ -53,6 +53,10 @@
+         mod zkvm;
+         pub use zkvm::*;
+     }
++    target_os = "safaos" => {
++        mod safaos;
++        pub use safaos::*;
++    }
+     _ => {
+         mod unsupported;
+         pub use unsupported::*;
+diff --git a/library/std/src/sys/args/safaos.rs b/library/std/src/sys/args/safaos.rs
+new file mode 100644
+index 00000000..d67fa601
+--- /dev/null
++++ b/library/std/src/sys/args/safaos.rs
+@@ -0,0 +1,46 @@
++use crate::ffi::OsString;
++use crate::fmt;
++
++pub struct Args(safa_api::process::args::ArgsIter);
++
++pub fn args() -> Args {
++    Args(safa_api::process::args::ArgsIter::get())
++}
++
++impl fmt::Debug for Args {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        let mut list = f.debug_list();
++        let len = self.len();
++        for i in 0..len {
++            // safe because index is always in len and raw_args is initialized (otherwise len is going to be 0)
++            let arg = unsafe { self.0.get_index(i).unwrap_unchecked() };
++            list.entry(&arg);
++        }
++        list.finish()
++    }
++}
++
++impl Iterator for Args {
++    type Item = OsString;
++    fn next(&mut self) -> Option<OsString> {
++        self.0
++            .next()
++            .map(|arg| unsafe { OsString::from_encoded_bytes_unchecked(arg.as_bytes().to_vec()) })
++    }
++
++    fn size_hint(&self) -> (usize, Option<usize>) {
++        (self.0.len(), Some(self.0.len()))
++    }
++}
++
++impl ExactSizeIterator for Args {
++    fn len(&self) -> usize {
++        self.0.len()
++    }
++}
++
++impl DoubleEndedIterator for Args {
++    fn next_back(&mut self) -> Option<OsString> {
++        todo!("next_back on Args is not implemented yet")
++    }
++}
+diff --git a/library/std/src/sys/env/mod.rs b/library/std/src/sys/env/mod.rs
+index 89856516..7255835d 100644
+--- a/library/std/src/sys/env/mod.rs
++++ b/library/std/src/sys/env/mod.rs
+@@ -55,6 +55,10 @@
+         mod zkvm;
+         pub use zkvm::*;
+     }
++    target_os = "safaos" => {
++        mod safaos;
++        pub use safaos::*;
++    }
+     _ => {
+         mod unsupported;
+         pub use unsupported::*;
+diff --git a/library/std/src/sys/env/safaos.rs b/library/std/src/sys/env/safaos.rs
+new file mode 100644
+index 00000000..fb73ee60
+--- /dev/null
++++ b/library/std/src/sys/env/safaos.rs
+@@ -0,0 +1,54 @@
++use core::fmt;
++
++use crate::ffi::{OsStr, OsString};
++use crate::io;
++
++pub struct Env {
++    inner: Vec<(OsString, OsString)>,
++    index: usize,
++}
++
++impl fmt::Debug for Env {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        f.debug_list().entries(self.inner.iter()).finish()
++    }
++}
++
++impl Iterator for Env {
++    type Item = (OsString, OsString);
++    fn next(&mut self) -> Option<(OsString, OsString)> {
++        if self.index >= self.inner.len() {
++            return None;
++        }
++        let (key, value) = self.inner[self.index].clone();
++        self.index += 1;
++        Some((key, value))
++    }
++}
++
++pub fn env() -> Env {
++    let all = safa_api::process::env::env_get_all();
++    let mut results = Vec::with_capacity(all.len());
++    for (key, value) in all {
++        results.push((unsafe { OsString::from_encoded_bytes_unchecked(key.to_vec()) }, unsafe {
++            OsString::from_encoded_bytes_unchecked(value.to_bytes().to_vec())
++        }));
++    }
++
++    Env { inner: results, index: 0 }
++}
++
++pub fn getenv(key: &OsStr) -> Option<OsString> {
++    safa_api::process::env::env_get(key.as_encoded_bytes())
++        .map(|s| unsafe { OsString::from_encoded_bytes_unchecked(s.to_vec()) })
++}
++
++pub unsafe fn setenv(key: &OsStr, value: &OsStr) -> io::Result<()> {
++    safa_api::process::env::env_set(key.as_encoded_bytes(), value.as_encoded_bytes());
++    Ok(())
++}
++
++pub unsafe fn unsetenv(key: &OsStr) -> io::Result<()> {
++    safa_api::process::env::env_remove(key.as_encoded_bytes());
++    Ok(())
++}
+diff --git a/library/std/src/sys/exit.rs b/library/std/src/sys/exit.rs
+index 53fb92ba..b60734ef 100644
+--- a/library/std/src/sys/exit.rs
++++ b/library/std/src/sys/exit.rs
+@@ -135,6 +135,9 @@ pub fn exit(code: i32) -> ! {
+         target_os = "xous" => {
+             crate::os::xous::ffi::exit(code as u32)
+         }
++        target_os = "safaos" => {
++            crate::sys::pal::os::exit(code as i32)
++        }
+         _ => {
+             let _ = code;
+             crate::intrinsics::abort()
+diff --git a/library/std/src/sys/fs/mod.rs b/library/std/src/sys/fs/mod.rs
+index 0c297c57..fd84996f 100644
+--- a/library/std/src/sys/fs/mod.rs
++++ b/library/std/src/sys/fs/mod.rs
+@@ -29,6 +29,10 @@
+         mod hermit;
+         use hermit as imp;
+     }
++    target_os = "safaos" => {
++        mod safaos;
++        use safaos as imp;
++    }
+     target_os = "motor" => {
+         mod motor;
+         use motor as imp;
+diff --git a/library/std/src/sys/fs/safaos.rs b/library/std/src/sys/fs/safaos.rs
+new file mode 100644
+index 00000000..bc574296
+--- /dev/null
++++ b/library/std/src/sys/fs/safaos.rs
+@@ -0,0 +1,517 @@
++use crate::ffi::{OsStr, OsString};
++use crate::hash::Hash;
++use crate::io::{self, BorrowedCursor, IoSlice, IoSliceMut, SeekFrom};
++use crate::io::{Read, Seek, Write};
++use crate::path::{Path, PathBuf};
++pub use crate::sys::fs::common::Dir;
++use crate::sys::helpers::ignore_notfound;
++use crate::sys::resources::{DirIterResource, FileDesc, FileResource};
++use crate::sys::time::SystemTime;
++use crate::sys::{unsupported, unsupported_err};
++use crate::{fmt, fs};
++
++use safa_api::abi::fs as raw_fs;
++use safa_api::abi::fs::FSObjectType;
++use safa_api::errors::ErrorStatus;
++use safa_api::syscalls;
++
++use crate::fs::TryLockError;
++use crate::sys::pal::resources::path_to_str;
++
++#[derive(Debug)]
++pub struct File(pub(crate) FileDesc);
++
++#[derive(Debug, Clone)]
++pub struct FileAttr {
++    size: usize,
++    kind: FileType,
++}
++
++impl From<raw_fs::FileAttr> for FileAttr {
++    fn from(other: raw_fs::FileAttr) -> Self {
++        Self { size: other.size, kind: other.kind.into() }
++    }
++}
++
++#[derive(Debug)]
++pub struct ReadDir {
++    /// the resource id of the directory iterator
++    ri: DirIterResource,
++    /// the path of the directory
++    path: PathBuf,
++}
++
++pub struct DirEntry {
++    inner: raw_fs::DirEntry,
++    full_path: PathBuf,
++}
++
++impl DirEntry {
++    fn name_bytes(&self) -> &[u8] {
++        &self.inner.name[..self.inner.name_length]
++    }
++
++    fn from_raw(raw: raw_fs::DirEntry, parent_path: &Path) -> Self {
++        let name = unsafe { OsStr::from_encoded_bytes_unchecked(&raw.name[..raw.name_length]) };
++        let full_path = parent_path.join(name);
++        Self { inner: raw, full_path }
++    }
++}
++
++#[derive(Clone, Debug)]
++pub struct OpenOptions {
++    truncate: bool,
++    create: bool,
++    create_new: bool,
++    read: bool,
++    write: bool,
++    append: bool,
++}
++
++#[derive(Copy, Clone, Debug, Default)]
++pub struct FileTimes {}
++
++pub struct FilePermissions(!);
++
++#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
++pub enum FileType {
++    File,
++    Directory,
++    Device,
++}
++
++impl From<raw_fs::FSObjectType> for FileType {
++    fn from(value: raw_fs::FSObjectType) -> Self {
++        use raw_fs::FSObjectType as Raw;
++        match value {
++            Raw::Directory => Self::Directory,
++            Raw::File => Self::File,
++            Raw::Device => Self::Device,
++        }
++    }
++}
++
++#[derive(Debug)]
++pub struct DirBuilder {}
++
++impl FileAttr {
++    pub fn size(&self) -> u64 {
++        self.size as u64
++    }
++
++    pub fn perm(&self) -> FilePermissions {
++        unimplemented!("File Permissions is not yet implemented for SafaOS")
++    }
++
++    pub fn file_type(&self) -> FileType {
++        self.kind
++    }
++
++    pub fn modified(&self) -> io::Result<SystemTime> {
++        unsupported()
++    }
++
++    pub fn accessed(&self) -> io::Result<SystemTime> {
++        unsupported()
++    }
++
++    pub fn created(&self) -> io::Result<SystemTime> {
++        unsupported()
++    }
++}
++
++impl FilePermissions {
++    pub fn readonly(&self) -> bool {
++        self.0
++    }
++
++    pub fn set_readonly(&mut self, _readonly: bool) {
++        self.0
++    }
++}
++
++impl Clone for FilePermissions {
++    fn clone(&self) -> FilePermissions {
++        self.0
++    }
++}
++
++impl PartialEq for FilePermissions {
++    fn eq(&self, _other: &FilePermissions) -> bool {
++        self.0
++    }
++}
++
++impl Eq for FilePermissions {}
++
++impl fmt::Debug for FilePermissions {
++    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        self.0
++    }
++}
++
++impl FileTimes {
++    pub fn set_accessed(&mut self, _t: SystemTime) {}
++    pub fn set_modified(&mut self, _t: SystemTime) {}
++}
++
++impl FileType {
++    pub fn is_dir(&self) -> bool {
++        *self == Self::Directory
++    }
++
++    pub fn is_file(&self) -> bool {
++        *self == Self::File || *self == Self::Device
++    }
++
++    pub fn is_symlink(&self) -> bool {
++        false
++    }
++}
++
++impl Iterator for ReadDir {
++    type Item = io::Result<DirEntry>;
++
++    fn next(&mut self) -> Option<io::Result<DirEntry>> {
++        let raw = self.ri.next()?;
++        Some(Ok(DirEntry::from_raw(raw, &self.path)))
++    }
++}
++
++impl DirEntry {
++    pub fn path(&self) -> PathBuf {
++        self.full_path.clone()
++    }
++
++    pub fn file_name(&self) -> OsString {
++        unsafe { OsString::from_encoded_bytes_unchecked(self.name_bytes().to_vec()) }
++    }
++
++    pub fn metadata(&self) -> io::Result<FileAttr> {
++        Ok(self.inner.attrs.clone().into())
++    }
++
++    pub fn file_type(&self) -> io::Result<FileType> {
++        Ok(self.inner.attrs.kind.into())
++    }
++}
++
++impl OpenOptions {
++    pub fn new() -> OpenOptions {
++        OpenOptions {
++            truncate: false,
++            create: false,
++            read: false,
++            write: false,
++            create_new: false,
++            append: false,
++        }
++    }
++
++    pub fn read(&mut self, read: bool) {
++        self.read = read
++    }
++    pub fn write(&mut self, write: bool) {
++        self.write = write
++    }
++    pub fn append(&mut self, append: bool) {
++        self.append = append
++    }
++    pub fn truncate(&mut self, truncate: bool) {
++        self.truncate = truncate
++    }
++    pub fn create(&mut self, create: bool) {
++        self.create = create
++    }
++    pub fn create_new(&mut self, create_new: bool) {
++        self.create_new = create_new
++    }
++}
++
++impl File {
++    pub fn into_raw(self) -> FileDesc {
++        self.0
++    }
++
++    pub fn from_raw(fd: FileDesc) -> Self {
++        Self(fd)
++    }
++
++    pub fn open(path: &Path, opts: &OpenOptions) -> io::Result<File> {
++        let append = opts.append && opts.write;
++        let truncate = opts.truncate && opts.write;
++
++        let path = path_to_str!(path);
++        let open_f = || FileDesc::open(path, opts.write, opts.read, append, opts.create, truncate);
++        let fd = match open_f() {
++            Err(ErrorStatus::NoSuchAFileOrDirectory) if opts.create_new => {
++                syscalls::fs::create(path)?;
++                open_f()?
++            }
++            Err(other) => return Err(other.into()),
++            Ok(_) if opts.create_new => return Err(ErrorStatus::AlreadyExists.into()),
++            Ok(fd) => fd,
++        };
++
++        Ok(Self(fd))
++    }
++
++    pub fn file_attr(&self) -> io::Result<FileAttr> {
++        Ok(self.0.fd_raw().attrs()?)
++    }
++
++    pub fn size(&self) -> Option<io::Result<u64>> {
++        Some(self.file_attr().map(|attr| attr.size as u64))
++    }
++
++    pub fn fsync(&self) -> io::Result<()> {
++        self.0.fsync()
++    }
++
++    pub fn datasync(&self) -> io::Result<()> {
++        self.fsync()
++    }
++
++    pub fn lock(&self) -> io::Result<()> {
++        unsupported()
++    }
++
++    pub fn lock_shared(&self) -> io::Result<()> {
++        unsupported()
++    }
++
++    pub fn try_lock(&self) -> Result<(), TryLockError> {
++        Err(TryLockError::Error(unsupported_err()))
++    }
++
++    pub fn try_lock_shared(&self) -> Result<(), TryLockError> {
++        Err(TryLockError::Error(unsupported_err()))
++    }
++
++    pub fn unlock(&self) -> io::Result<()> {
++        unsupported()
++    }
++
++    pub fn truncate(&self, size: u64) -> io::Result<()> {
++        Ok(self.0.fd_raw().truncate(size as usize)?)
++    }
++
++    pub fn read(&self, buf: &mut [u8]) -> io::Result<usize> {
++        (&mut &self.0).read(buf)
++    }
++
++    pub fn read_vectored(&self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
++        (&mut &self.0).read_vectored(bufs)
++    }
++
++    pub fn is_read_vectored(&self) -> bool {
++        (&self.0).is_read_vectored()
++    }
++
++    pub fn read_buf(&self, cursor: BorrowedCursor<'_>) -> io::Result<()> {
++        (&mut &self.0).read_buf(cursor)
++    }
++
++    pub fn write(&self, buf: &[u8]) -> io::Result<usize> {
++        (&mut &self.0).write(buf)
++    }
++
++    pub fn write_vectored(&self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
++        (&mut &self.0).write_vectored(bufs)
++    }
++
++    pub fn is_write_vectored(&self) -> bool {
++        (&self.0).is_write_vectored()
++    }
++
++    pub fn flush(&self) -> io::Result<()> {
++        self.fsync()
++    }
++
++    pub fn seek(&self, pos: SeekFrom) -> io::Result<u64> {
++        (&mut &self.0).seek(pos)
++    }
++
++    pub fn tell(&self) -> io::Result<u64> {
++        Ok(self.0.tell())
++    }
++
++    pub fn duplicate(&self) -> io::Result<File> {
++        Ok(Self(self.0.clone()))
++    }
++
++    pub fn set_permissions(&self, _perm: FilePermissions) -> io::Result<()> {
++        unsupported()
++    }
++
++    pub fn set_times(&self, _times: FileTimes) -> io::Result<()> {
++        unsupported()
++    }
++}
++
++impl DirBuilder {
++    pub fn new() -> DirBuilder {
++        DirBuilder {}
++    }
++
++    pub fn mkdir(&self, p: &Path) -> io::Result<()> {
++        Ok(syscalls::fs::createdir(path_to_str!(p))?)
++    }
++}
++
++pub fn readdir(p: &Path) -> io::Result<ReadDir> {
++    let path = path_to_str!(p);
++    let diriter = DirIterResource::open(path)?;
++    Ok(ReadDir { ri: diriter, path: p.to_path_buf() })
++}
++
++pub fn unlink(p: &Path) -> io::Result<()> {
++    let str = path_to_str!(p);
++    let fattrs = syscalls::fs::getdirentry(str)?;
++    if fattrs.attrs.kind != FSObjectType::File {
++        return Err(ErrorStatus::NotAFile.into());
++    }
++    syscalls::fs::remove_path(str)?;
++    Ok(())
++}
++
++pub fn rename(old: &Path, new: &Path) -> io::Result<()> {
++    let old_str = path_to_str!(old);
++    let new_str = path_to_str!(new);
++
++    let old_attrs = syscalls::fs::getdirentry(old_str)?;
++    // TODO: implement native rename syscall
++    match old_attrs.attrs.kind {
++        FSObjectType::File => {
++            copy(old, new)?;
++            syscalls::fs::remove_path(old_str)?;
++            Ok(())
++        }
++        FSObjectType::Directory => {
++            // create the new directory if it doesn't exist
++            if let Err(e) = syscalls::fs::createdir(new_str)
++                && e != ErrorStatus::AlreadyExists
++            {
++                return Err(e.into());
++            }
++
++            for entry in crate::fs::read_dir(old)? {
++                let entry = entry?;
++                let entry_name = entry.file_name();
++                // special cases for '.' and '..' to avoid infinite recursion
++                if entry_name.as_encoded_bytes() == b"." || entry_name.as_encoded_bytes() == b".." {
++                    continue;
++                }
++
++                let old_entry_path = entry.path();
++
++                let new_entry_path = new.join(entry_name);
++                rename(&old_entry_path, &new_entry_path)?;
++            }
++
++            syscalls::fs::remove_path(old_str)?;
++            Ok(())
++        }
++        _ => unsupported(),
++    }
++}
++
++pub fn set_perm(_p: &Path, perm: FilePermissions) -> io::Result<()> {
++    match perm.0 {}
++}
++
++pub fn set_times(_p: &Path, _times: FileTimes) -> io::Result<()> {
++    unsupported()
++}
++
++pub fn set_times_nofollow(_p: &Path, _times: FileTimes) -> io::Result<()> {
++    unsupported()
++}
++
++pub fn rmdir(p: &Path) -> io::Result<()> {
++    let path = path_to_str!(p);
++    let fattrs = syscalls::fs::getdirentry(path)?;
++    if fattrs.attrs.kind != FSObjectType::Directory {
++        return Err(ErrorStatus::NotADirectory.into());
++    }
++    syscalls::fs::remove_path(path)?;
++    Ok(())
++}
++
++pub fn remove_dir_all(path: &Path) -> io::Result<()> {
++    for child in crate::fs::read_dir(path)? {
++        let result: io::Result<()> = try {
++            let child = child?;
++            let name = child.file_name();
++            // special cases for '.' and '..' to avoid infinite recursion
++            if name.as_encoded_bytes() == b"." || name.as_encoded_bytes() == b".." {
++                continue;
++            }
++
++            let path = child.path();
++
++            if child.file_type()?.is_dir() {
++                remove_dir_all(&path)?;
++            } else {
++                fs::remove_file(&path)?;
++            }
++        };
++        // ignore internal NotFound errors to prevent race conditions
++        if let Err(err) = &result
++            && err.kind() != io::ErrorKind::NotFound
++        {
++            return result;
++        }
++    }
++    ignore_notfound(fs::remove_dir(path))
++}
++
++pub fn exists(path: &Path) -> io::Result<bool> {
++    let path = path_to_str!(path);
++    // fastest syscall to verify the existence of a path
++    match syscalls::fs::getdirentry(path) {
++        Err(ErrorStatus::NoSuchAFileOrDirectory) => Ok(false),
++        Err(other) => Err(other.into()),
++        Ok(_) => Ok(true),
++    }
++}
++
++pub fn readlink(_p: &Path) -> io::Result<PathBuf> {
++    unsupported()
++}
++
++pub fn symlink(_original: &Path, _link: &Path) -> io::Result<()> {
++    unsupported()
++}
++
++pub fn link(_src: &Path, _dst: &Path) -> io::Result<()> {
++    unsupported()
++}
++
++pub fn stat(p: &Path) -> io::Result<FileAttr> {
++    let path = path_to_str!(p);
++    let fd = FileResource::open(path, raw_fs::OpenOptions::READ)?;
++    Ok(fd.attrs()?)
++}
++
++pub fn lstat(p: &Path) -> io::Result<FileAttr> {
++    // always correct because there is no symlinks :D
++    stat(p)
++}
++
++pub fn canonicalize(_p: &Path) -> io::Result<PathBuf> {
++    unsupported()
++}
++
++pub fn copy(from: &Path, to: &Path) -> io::Result<u64> {
++    let mut reader = fs::File::open(from)?;
++    let metadata = reader.metadata()?;
++
++    if !metadata.is_file() {
++        return Err(ErrorStatus::NotAFile.into());
++    }
++
++    let mut writer = fs::File::create(to)?;
++    let ret = io::copy(&mut reader, &mut writer)?;
++    Ok(ret)
++}
+diff --git a/library/std/src/sys/io/error/mod.rs b/library/std/src/sys/io/error/mod.rs
+index d7a0b9b4..b9998ef2 100644
+--- a/library/std/src/sys/io/error/mod.rs
++++ b/library/std/src/sys/io/error/mod.rs
+@@ -39,6 +39,10 @@
+         mod xous;
+         pub use xous::*;
+     }
++    target_os = "safaos" => {
++        mod safaos;
++        pub use safaos::*;
++    }
+     any(
+         target_os = "vexos",
+         target_family = "wasm",
+diff --git a/library/std/src/sys/io/error/safaos.rs b/library/std/src/sys/io/error/safaos.rs
+new file mode 100644
+index 00000000..6dae1cde
+--- /dev/null
++++ b/library/std/src/sys/io/error/safaos.rs
+@@ -0,0 +1,34 @@
++use safa_api::errors::ErrorStatus;
++
++use crate::io;
++use crate::sys::io::RawOsError;
++
++pub fn errno() -> RawOsError {
++    (ErrorStatus::Unknown as u16).into()
++}
++
++pub fn is_interrupted(_code: io::RawOsError) -> bool {
++    false // SafaOS doesn't have signals.
++}
++
++pub fn decode_error_kind(code: io::RawOsError) -> io::ErrorKind {
++    if code < 0 || code > u16::MAX.into() {
++        return io::ErrorKind::Uncategorized;
++    }
++
++    let Ok(err) = ErrorStatus::try_from_u16(code as u16) else {
++        return io::ErrorKind::Uncategorized;
++    };
++
++    let results = crate::os::safaos::into_io_error_kind(err);
++    results
++}
++
++pub fn error_string(errno: RawOsError) -> String {
++    let error: ErrorStatus = match errno {
++        x if x < 0 => ErrorStatus::Unknown,
++        x if x > u16::MAX.into() => ErrorStatus::Unknown,
++        x => ErrorStatus::try_from_u16(x as u16).unwrap_or(ErrorStatus::Unknown), /* u16 */
++    };
++    format!("{}", error.as_str())
++}
+diff --git a/library/std/src/sys/net/connection/mod.rs b/library/std/src/sys/net/connection/mod.rs
+index 84b53fd3..c6bf227b 100644
+--- a/library/std/src/sys/net/connection/mod.rs
++++ b/library/std/src/sys/net/connection/mod.rs
+@@ -29,6 +29,10 @@
+         mod uefi;
+         pub use uefi::*;
+     }
++    target_os = "safaos" => {
++          mod safaos;
++          pub use safaos::*;
++      }
+     _ => {
+         mod unsupported;
+         pub use unsupported::*;
+diff --git a/library/std/src/sys/net/connection/safaos.rs b/library/std/src/sys/net/connection/safaos.rs
+new file mode 100644
+index 00000000..d5bf229c
+--- /dev/null
++++ b/library/std/src/sys/net/connection/safaos.rs
+@@ -0,0 +1,509 @@
++use core::net::SocketAddrV4;
++use core::num::NonZero;
++
++use crate::net::ToSocketAddrs;
++use safa_api::abi::sockets::{InetV4SocketAddr, SockMsgFlags, ToSocketAddr};
++use safa_api::errors::ErrorStatus;
++use safa_api::sockets::socket::SocketOpt;
++use safa_api::sockets::{Socket, SocketDomain, SocketKind};
++
++use crate::sys::net::connection::each_addr;
++
++use crate::fmt;
++use crate::io::{self, BorrowedCursor, IoSlice, IoSliceMut};
++use crate::net::{Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr};
++use crate::sync::RwLock;
++use crate::sys::unsupported;
++use crate::time::Duration;
++
++pub struct TcpStream(!);
++
++impl TcpStream {
++    pub fn connect<A: ToSocketAddrs>(_addr: A) -> io::Result<TcpStream> {
++        unsupported()
++    }
++
++    pub fn connect_timeout(_: &SocketAddr, _: Duration) -> io::Result<TcpStream> {
++        unsupported()
++    }
++
++    pub fn set_read_timeout(&self, _: Option<Duration>) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn set_write_timeout(&self, _: Option<Duration>) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn read_timeout(&self) -> io::Result<Option<Duration>> {
++        self.0
++    }
++
++    pub fn write_timeout(&self) -> io::Result<Option<Duration>> {
++        self.0
++    }
++
++    pub fn peek(&self, _: &mut [u8]) -> io::Result<usize> {
++        self.0
++    }
++
++    pub fn read(&self, _: &mut [u8]) -> io::Result<usize> {
++        self.0
++    }
++
++    pub fn read_buf(&self, _buf: BorrowedCursor<'_>) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn read_vectored(&self, _: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
++        self.0
++    }
++
++    pub fn is_read_vectored(&self) -> bool {
++        self.0
++    }
++
++    pub fn write(&self, _: &[u8]) -> io::Result<usize> {
++        self.0
++    }
++
++    pub fn write_vectored(&self, _: &[IoSlice<'_>]) -> io::Result<usize> {
++        self.0
++    }
++
++    pub fn is_write_vectored(&self) -> bool {
++        self.0
++    }
++
++    pub fn peer_addr(&self) -> io::Result<SocketAddr> {
++        self.0
++    }
++
++    pub fn socket_addr(&self) -> io::Result<SocketAddr> {
++        self.0
++    }
++
++    pub fn shutdown(&self, _: Shutdown) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn duplicate(&self) -> io::Result<TcpStream> {
++        self.0
++    }
++
++    pub fn set_linger(&self, _: Option<Duration>) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn linger(&self) -> io::Result<Option<Duration>> {
++        self.0
++    }
++
++    pub fn set_nodelay(&self, _: bool) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn nodelay(&self) -> io::Result<bool> {
++        self.0
++    }
++
++    pub fn set_ttl(&self, _: u32) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn ttl(&self) -> io::Result<u32> {
++        self.0
++    }
++
++    pub fn take_error(&self) -> io::Result<Option<io::Error>> {
++        self.0
++    }
++
++    pub fn set_nonblocking(&self, _: bool) -> io::Result<()> {
++        self.0
++    }
++}
++
++impl fmt::Debug for TcpStream {
++    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        self.0
++    }
++}
++
++pub struct TcpListener(!);
++
++impl TcpListener {
++    pub fn bind<A: ToSocketAddrs>(_addr: A) -> io::Result<Self> {
++        unsupported()
++    }
++
++    pub fn socket_addr(&self) -> io::Result<SocketAddr> {
++        self.0
++    }
++
++    pub fn accept(&self) -> io::Result<(TcpStream, SocketAddr)> {
++        self.0
++    }
++
++    pub fn duplicate(&self) -> io::Result<TcpListener> {
++        self.0
++    }
++
++    pub fn set_ttl(&self, _: u32) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn ttl(&self) -> io::Result<u32> {
++        self.0
++    }
++
++    pub fn set_only_v6(&self, _: bool) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn only_v6(&self) -> io::Result<bool> {
++        self.0
++    }
++
++    pub fn take_error(&self) -> io::Result<Option<io::Error>> {
++        self.0
++    }
++
++    pub fn set_nonblocking(&self, _: bool) -> io::Result<()> {
++        self.0
++    }
++}
++
++impl fmt::Debug for TcpListener {
++    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        self.0
++    }
++}
++
++use safa_api::abi::sockets::SocketAddr as AbiSocketAddr;
++
++enum ApiSocketAddr {
++    Ipv4(InetV4SocketAddr),
++}
++
++impl ApiSocketAddr {
++    fn as_ref(&self) -> (&AbiSocketAddr, usize) {
++        match self {
++            ApiSocketAddr::Ipv4(addr) => (addr.as_generic(), size_of::<InetV4SocketAddr>()),
++        }
++    }
++}
++
++fn socket_addr_to_api(addr: &SocketAddr) -> io::Result<(SocketDomain, ApiSocketAddr)> {
++    match addr {
++        SocketAddr::V4(addr) => Ok((
++            SocketDomain::Ipv4,
++            ApiSocketAddr::Ipv4(InetV4SocketAddr::new(addr.port(), *addr.ip())),
++        )),
++        SocketAddr::V6(_) => unsupported(),
++    }
++}
++
++fn api_addr_to_socket_addr(addr: ApiSocketAddr) -> SocketAddr {
++    match addr {
++        ApiSocketAddr::Ipv4(addr) => SocketAddr::V4(SocketAddrV4::new(addr.ip(), addr.port())),
++    }
++}
++
++pub struct UdpSocket {
++    inner: Socket,
++    // TODO: get peer and local from the socket using syscalls?
++    peer: RwLock<Option<SocketAddr>>,
++    local: SocketAddr,
++}
++
++impl UdpSocket {
++    pub fn bind<A: ToSocketAddrs>(addr: A) -> io::Result<UdpSocket> {
++        return each_addr(addr, inner);
++
++        fn inner(addr: &SocketAddr) -> io::Result<UdpSocket> {
++            let (domain, api_addr) = socket_addr_to_api(addr)?;
++            let kind = SocketKind::Datagram;
++            let socket = Socket::builder(domain, kind, 0).build()?;
++
++            let (addr_ref, addr_len) = api_addr.as_ref();
++            socket.bind(addr_ref, addr_len)?;
++            Ok(UdpSocket { inner: socket, peer: RwLock::new(None), local: *addr })
++        }
++    }
++
++    pub fn peer_addr(&self) -> io::Result<SocketAddr> {
++        self.peer
++            .read()
++            .unwrap()
++            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "not connected"))
++    }
++
++    pub fn socket_addr(&self) -> io::Result<SocketAddr> {
++        Ok(self.local)
++    }
++
++    #[inline]
++    fn recv_from_inner(
++        &self,
++        flags: SockMsgFlags,
++        buf: &mut [u8],
++    ) -> io::Result<(usize, SocketAddr)> {
++        let mut addr = InetV4SocketAddr::new(0, Ipv4Addr::from_bits(0));
++        let mut recvied_from = (addr.as_non_null(), size_of::<InetV4SocketAddr>());
++        let received = self.inner.recv_from(buf, flags, &mut recvied_from)?;
++
++        let (_, addr_len) = recvied_from;
++        assert_eq!(
++            addr_len,
++            size_of::<InetV4SocketAddr>(),
++            "Recv from on a UDP socket should always return a valid address"
++        );
++
++        Ok((received, api_addr_to_socket_addr(ApiSocketAddr::Ipv4(addr))))
++    }
++
++    pub fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
++        self.recv_from_inner(SockMsgFlags::NONE, buf)
++    }
++
++    pub fn peek_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
++        self.recv_from_inner(SockMsgFlags::PEEK, buf)
++    }
++
++    pub fn send_to(&self, buf: &[u8], target: &SocketAddr) -> io::Result<usize> {
++        let (_, api_addr) = socket_addr_to_api(target)?;
++        Ok(self.inner.send_to(buf, SockMsgFlags::NONE, Some(api_addr.as_ref()))?)
++    }
++
++    pub fn duplicate(&self) -> io::Result<UdpSocket> {
++        todo!("actual resource duplication...")
++    }
++
++    pub fn set_read_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
++        let am = dur.map(|dur| dur.as_millis() as u64).unwrap_or(0);
++        self.inner.set_sock_opt(SocketOpt::ReadTimeout, am)?;
++        Ok(())
++    }
++
++    pub fn set_write_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
++        let am = dur.map(|dur| dur.as_millis() as u64).unwrap_or(0);
++        self.inner.set_sock_opt(SocketOpt::WriteTimeout, am)?;
++        Ok(())
++    }
++
++    pub fn read_timeout(&self) -> io::Result<Option<Duration>> {
++        let mut am: u64 = 0;
++        unsafe {
++            self.inner.get_sock_opt(SocketOpt::ReadTimeout, &mut am)?;
++        }
++        let dur = NonZero::new(am).map(|n| Duration::from_millis(n.get()));
++        Ok(dur)
++    }
++
++    pub fn write_timeout(&self) -> io::Result<Option<Duration>> {
++        let mut am: u64 = 0;
++        unsafe {
++            self.inner.get_sock_opt(SocketOpt::WriteTimeout, &mut am)?;
++        }
++        let dur = NonZero::new(am).map(|n| Duration::from_millis(n.get()));
++        Ok(dur)
++    }
++
++    pub fn set_broadcast(&self, can: bool) -> io::Result<()> {
++        self.inner.set_sock_opt(SocketOpt::IpBroadcast, can)?;
++        Ok(())
++    }
++
++    pub fn broadcast(&self) -> io::Result<bool> {
++        let mut can = false;
++        unsafe {
++            self.inner.get_sock_opt(SocketOpt::IpBroadcast, &mut can)?;
++        }
++        Ok(can)
++    }
++
++    pub fn set_multicast_loop_v4(&self, _: bool) -> io::Result<()> {
++        unsupported()
++    }
++
++    pub fn multicast_loop_v4(&self) -> io::Result<bool> {
++        unsupported()
++    }
++
++    pub fn set_multicast_ttl_v4(&self, _: u32) -> io::Result<()> {
++        unsupported()
++    }
++
++    pub fn multicast_ttl_v4(&self) -> io::Result<u32> {
++        unsupported()
++    }
++
++    pub fn set_multicast_loop_v6(&self, _: bool) -> io::Result<()> {
++        unsupported()
++    }
++
++    pub fn multicast_loop_v6(&self) -> io::Result<bool> {
++        unsupported()
++    }
++
++    pub fn join_multicast_v4(&self, _: &Ipv4Addr, _: &Ipv4Addr) -> io::Result<()> {
++        unsupported()
++    }
++
++    pub fn join_multicast_v6(&self, _: &Ipv6Addr, _: u32) -> io::Result<()> {
++        unsupported()
++    }
++
++    pub fn leave_multicast_v4(&self, _: &Ipv4Addr, _: &Ipv4Addr) -> io::Result<()> {
++        unsupported()
++    }
++
++    pub fn leave_multicast_v6(&self, _: &Ipv6Addr, _: u32) -> io::Result<()> {
++        unsupported()
++    }
++
++    pub fn set_ttl(&self, ttl: u32) -> io::Result<()> {
++        self.inner.set_sock_opt(SocketOpt::IpTTL, ttl)?;
++        Ok(())
++    }
++
++    pub fn ttl(&self) -> io::Result<u32> {
++        let mut ttl: u32 = 0;
++        unsafe { self.inner.get_sock_opt(SocketOpt::IpTTL, &mut ttl)? };
++        Ok(ttl)
++    }
++
++    pub fn take_error(&self) -> io::Result<Option<io::Error>> {
++        let mut err: u16 = 0;
++        unsafe {
++            self.inner.get_sock_opt(SocketOpt::SocketError, &mut err)?;
++        }
++        if err == 0 { Ok(None) } else { Ok(Some(ErrorStatus::from_u16(err).into())) }
++    }
++
++    pub fn set_nonblocking(&self, non_blocking: bool) -> io::Result<()> {
++        Ok(self.inner.set_blocking(!non_blocking)?)
++    }
++
++    pub fn recv(&self, buf: &mut [u8]) -> io::Result<usize> {
++        Ok(self.inner.recv(buf, SockMsgFlags::NONE)?)
++    }
++
++    pub fn peek(&self, buf: &mut [u8]) -> io::Result<usize> {
++        Ok(self.inner.recv(buf, SockMsgFlags::PEEK)?)
++    }
++
++    pub fn send(&self, buf: &[u8]) -> io::Result<usize> {
++        Ok(self.inner.send(buf, SockMsgFlags::NONE)?)
++    }
++
++    pub fn connect<A: ToSocketAddrs>(&self, addr: A) -> io::Result<()> {
++        return each_addr(addr, |addr| inner(self, addr));
++
++        fn inner(this: &UdpSocket, addr: &SocketAddr) -> io::Result<()> {
++            let peer_addr = addr;
++            let (_, api_addr) = socket_addr_to_api(peer_addr)?;
++            let (addr_ref, addr_len) = api_addr.as_ref();
++            this.inner.connect(addr_ref, addr_len)?;
++            *this.peer.write().unwrap() = Some(*peer_addr);
++            Ok(())
++        }
++    }
++}
++
++impl fmt::Debug for UdpSocket {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        f.debug_struct(stringify!(UdpSocket))
++            .field("ri", &self.inner.ri())
++            .field("addr", &self.socket_addr().expect("Shouldn't fail"))
++            .finish()
++    }
++}
++
++use safa_api::net::AddrHints;
++use safa_api::net::AddrInfo;
++use safa_api::net::LookupError;
++use safa_api::net::lookup_addr_info;
++
++#[stable(feature = "rust1", since = "1.0.0")]
++impl From<LookupError> for io::Error {
++    fn from(err: LookupError) -> io::Error {
++        match err {
++            LookupError::System(e) => e.into(),
++            LookupError::InvalidFamily => unreachable!("Invalid Family given to lookup_addr_info"),
++            LookupError::NoSuchNode | LookupError::NoSuchService => {
++                io::const_error!(io::ErrorKind::InvalidInput, "DNS couldn't resolve host name")
++            }
++            LookupError::ServerRefused => {
++                io::const_error!(io::ErrorKind::Uncategorized, "DNS Server Refused responding")
++            }
++            LookupError::NoData => {
++                io::const_error!(io::ErrorKind::Uncategorized, "DNS No Data for given host name")
++            }
++            LookupError::TemporaryFailure => {
++                io::const_error!(io::ErrorKind::HostUnreachable, "DNS Temporary Failure")
++            }
++        }
++    }
++}
++
++pub struct LookupHost {
++    current: Option<AddrInfo>,
++    port: u16,
++}
++
++impl LookupHost {
++    #[allow(unused)]
++    pub fn port(&self) -> u16 {
++        self.port
++    }
++}
++
++impl Iterator for LookupHost {
++    type Item = SocketAddr;
++    fn next(&mut self) -> Option<SocketAddr> {
++        match self.current.take() {
++            Some(mut info) => {
++                self.current = info.take_next();
++                Some(info.ip_socket_addr())
++            }
++            None => None,
++        }
++    }
++}
++
++impl TryFrom<&str> for LookupHost {
++    type Error = io::Error;
++
++    fn try_from(s: &str) -> io::Result<LookupHost> {
++        macro_rules! try_opt {
++            ($e:expr, $msg:expr) => {
++                match $e {
++                    Some(r) => r,
++                    None => return Err(io::const_error!(io::ErrorKind::InvalidInput, $msg)),
++                }
++            };
++        }
++
++        // split the string by ':' and convert the second part to u16
++        let (host, port_str) = try_opt!(s.rsplit_once(':'), "invalid socket address");
++        let port: u16 = try_opt!(port_str.parse().ok(), "invalid port value");
++        (host, port).try_into()
++    }
++}
++
++impl<'a> TryFrom<(&'a str, u16)> for LookupHost {
++    type Error = io::Error;
++
++    fn try_from((node, service): (&'a str, u16)) -> io::Result<LookupHost> {
++        let hints = AddrHints::new(Some(SocketKind::Stream), None, 0);
++        lookup_addr_info(Some(node), None, Some(&hints))
++            .map(|info| LookupHost { current: Some(info), port: service })
++            .map_err(|e| e.into())
++    }
++}
++
++pub fn lookup_host(host: &str, port: u16) -> io::Result<LookupHost> {
++    LookupHost::try_from((host, port))
++}
+diff --git a/library/std/src/sys/pal/mod.rs b/library/std/src/sys/pal/mod.rs
+index 88d9d420..6a8cdfbd 100644
+--- a/library/std/src/sys/pal/mod.rs
++++ b/library/std/src/sys/pal/mod.rs
+@@ -60,6 +60,10 @@
+         mod zkvm;
+         pub use self::zkvm::*;
+     }
++    target_os = "safaos" => {
++        mod safaos;
++        pub use self::safaos::*;
++    }
+     _ => {
+         mod unsupported;
+         pub use self::unsupported::*;
+diff --git a/library/std/src/sys/pal/safaos/common.rs b/library/std/src/sys/pal/safaos/common.rs
+new file mode 100644
+index 00000000..f3ed0b49
+--- /dev/null
++++ b/library/std/src/sys/pal/safaos/common.rs
+@@ -0,0 +1,22 @@
++use crate::io as std_io;
++use crate::os::safaos::api::syscalls;
++
++// SAFETY: must be called only once during runtime initialization.
++// NOTE: this is not guaranteed to run, for example when Rust code is called externally.
++pub unsafe fn init(_argc: isize, _argv: *const *const u8, _sigpipe: u8) {}
++
++// SAFETY: must be called only once during runtime cleanup.
++// NOTE: this is not guaranteed to run, for example when the program aborts.
++pub unsafe fn cleanup() {}
++
++pub fn unsupported<T>() -> std_io::Result<T> {
++    Err(unsupported_err())
++}
++
++pub fn unsupported_err() -> std_io::Error {
++    std_io::Error::UNSUPPORTED_PLATFORM
++}
++
++pub fn abort_internal() -> ! {
++    syscalls::process::exit(1)
++}
+diff --git a/library/std/src/sys/pal/safaos/futex.rs b/library/std/src/sys/pal/safaos/futex.rs
+new file mode 100644
+index 00000000..0f59d082
+--- /dev/null
++++ b/library/std/src/sys/pal/safaos/futex.rs
+@@ -0,0 +1,39 @@
++use crate::sync::atomic::Atomic;
++use crate::time::Duration;
++
++/// An atomic for use as a futex that is at least 32-bits but may be larger
++pub type Futex = Atomic<Primitive>;
++/// Must be the underlying type of Futex
++pub type Primitive = u32;
++
++/// An atomic for use as a futex that is at least 8-bits but may be larger.
++pub type SmallFutex = Atomic<SmallPrimitive>;
++/// Must be the underlying type of SmallFutex
++pub type SmallPrimitive = u32;
++
++pub fn futex_wait(futex: &Atomic<u32>, expected: u32, timeout: Option<Duration>) -> bool {
++    // FIXME: Infinite timeout is just the max for now
++    let timeout_duration = timeout.unwrap_or(Duration::MAX);
++    let results = safa_api::syscalls::futex::futex_wait(futex, expected, timeout_duration);
++    let timedout = results == Err(safa_api::errors::ErrorStatus::Timeout);
++    if let Err(err) = results {
++        panic!("FATAL System error while waiting for Futex: {}", err.as_str());
++    }
++    !timedout
++}
++
++#[inline]
++pub fn futex_wake(futex: &Atomic<u32>) -> bool {
++    let results = safa_api::syscalls::futex::futex_wake(futex, 1);
++    let timedout = results == Err(safa_api::errors::ErrorStatus::Timeout);
++    if let Err(err) = results {
++        panic!("FATAL System error while waking Futex: {}", err.as_str());
++    }
++    !timedout
++}
++
++#[inline]
++pub fn futex_wake_all(futex: &Atomic<u32>) {
++    safa_api::syscalls::futex::futex_wake(futex, usize::MAX)
++        .expect("FATAL System error while waking all Futexes");
++}
+diff --git a/library/std/src/sys/pal/safaos/mod.rs b/library/std/src/sys/pal/safaos/mod.rs
+new file mode 100644
+index 00000000..0b4e72b0
+--- /dev/null
++++ b/library/std/src/sys/pal/safaos/mod.rs
+@@ -0,0 +1,10 @@
++#![deny(unsafe_op_in_unsafe_fn)]
++
++pub mod futex;
++pub mod os;
++pub mod pipe;
++pub mod resources;
++pub mod start;
++
++mod common;
++pub use common::*;
+diff --git a/library/std/src/sys/pal/safaos/net.rs b/library/std/src/sys/pal/safaos/net.rs
+new file mode 100644
+index 00000000..87e61064
+--- /dev/null
++++ b/library/std/src/sys/pal/safaos/net.rs
+@@ -0,0 +1,369 @@
++use crate::fmt;
++use crate::io::{self, BorrowedCursor, IoSlice, IoSliceMut};
++use crate::net::{Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr};
++use crate::sys::unsupported;
++use crate::time::Duration;
++
++pub struct TcpStream(!);
++
++impl TcpStream {
++    pub fn connect(_: io::Result<&SocketAddr>) -> io::Result<TcpStream> {
++        unsupported()
++    }
++
++    pub fn connect_timeout(_: &SocketAddr, _: Duration) -> io::Result<TcpStream> {
++        unsupported()
++    }
++
++    pub fn set_read_timeout(&self, _: Option<Duration>) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn set_write_timeout(&self, _: Option<Duration>) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn read_timeout(&self) -> io::Result<Option<Duration>> {
++        self.0
++    }
++
++    pub fn write_timeout(&self) -> io::Result<Option<Duration>> {
++        self.0
++    }
++
++    pub fn peek(&self, _: &mut [u8]) -> io::Result<usize> {
++        self.0
++    }
++
++    pub fn read(&self, _: &mut [u8]) -> io::Result<usize> {
++        self.0
++    }
++
++    pub fn read_buf(&self, _buf: BorrowedCursor<'_>) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn read_vectored(&self, _: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
++        self.0
++    }
++
++    pub fn is_read_vectored(&self) -> bool {
++        self.0
++    }
++
++    pub fn write(&self, _: &[u8]) -> io::Result<usize> {
++        self.0
++    }
++
++    pub fn write_vectored(&self, _: &[IoSlice<'_>]) -> io::Result<usize> {
++        self.0
++    }
++
++    pub fn is_write_vectored(&self) -> bool {
++        self.0
++    }
++
++    pub fn peer_addr(&self) -> io::Result<SocketAddr> {
++        self.0
++    }
++
++    pub fn socket_addr(&self) -> io::Result<SocketAddr> {
++        self.0
++    }
++
++    pub fn shutdown(&self, _: Shutdown) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn duplicate(&self) -> io::Result<TcpStream> {
++        self.0
++    }
++
++    pub fn set_linger(&self, _: Option<Duration>) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn linger(&self) -> io::Result<Option<Duration>> {
++        self.0
++    }
++
++    pub fn set_nodelay(&self, _: bool) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn nodelay(&self) -> io::Result<bool> {
++        self.0
++    }
++
++    pub fn set_ttl(&self, _: u32) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn ttl(&self) -> io::Result<u32> {
++        self.0
++    }
++
++    pub fn take_error(&self) -> io::Result<Option<io::Error>> {
++        self.0
++    }
++
++    pub fn set_nonblocking(&self, _: bool) -> io::Result<()> {
++        self.0
++    }
++}
++
++impl fmt::Debug for TcpStream {
++    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        self.0
++    }
++}
++
++pub struct TcpListener(!);
++
++impl TcpListener {
++    pub fn bind(_: io::Result<&SocketAddr>) -> io::Result<TcpListener> {
++        unsupported()
++    }
++
++    pub fn socket_addr(&self) -> io::Result<SocketAddr> {
++        self.0
++    }
++
++    pub fn accept(&self) -> io::Result<(TcpStream, SocketAddr)> {
++        self.0
++    }
++
++    pub fn duplicate(&self) -> io::Result<TcpListener> {
++        self.0
++    }
++
++    pub fn set_ttl(&self, _: u32) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn ttl(&self) -> io::Result<u32> {
++        self.0
++    }
++
++    pub fn set_only_v6(&self, _: bool) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn only_v6(&self) -> io::Result<bool> {
++        self.0
++    }
++
++    pub fn take_error(&self) -> io::Result<Option<io::Error>> {
++        self.0
++    }
++
++    pub fn set_nonblocking(&self, _: bool) -> io::Result<()> {
++        self.0
++    }
++}
++
++impl fmt::Debug for TcpListener {
++    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        self.0
++    }
++}
++
++pub struct UdpSocket(!);
++
++impl UdpSocket {
++    pub fn bind(_: io::Result<&SocketAddr>) -> io::Result<UdpSocket> {
++        unsupported()
++    }
++
++    pub fn peer_addr(&self) -> io::Result<SocketAddr> {
++        self.0
++    }
++
++    pub fn socket_addr(&self) -> io::Result<SocketAddr> {
++        self.0
++    }
++
++    pub fn recv_from(&self, _: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
++        self.0
++    }
++
++    pub fn peek_from(&self, _: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
++        self.0
++    }
++
++    pub fn send_to(&self, _: &[u8], _: &SocketAddr) -> io::Result<usize> {
++        self.0
++    }
++
++    pub fn duplicate(&self) -> io::Result<UdpSocket> {
++        self.0
++    }
++
++    pub fn set_read_timeout(&self, _: Option<Duration>) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn set_write_timeout(&self, _: Option<Duration>) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn read_timeout(&self) -> io::Result<Option<Duration>> {
++        self.0
++    }
++
++    pub fn write_timeout(&self) -> io::Result<Option<Duration>> {
++        self.0
++    }
++
++    pub fn set_broadcast(&self, _: bool) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn broadcast(&self) -> io::Result<bool> {
++        self.0
++    }
++
++    pub fn set_multicast_loop_v4(&self, _: bool) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn multicast_loop_v4(&self) -> io::Result<bool> {
++        self.0
++    }
++
++    pub fn set_multicast_ttl_v4(&self, _: u32) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn multicast_ttl_v4(&self) -> io::Result<u32> {
++        self.0
++    }
++
++    pub fn set_multicast_loop_v6(&self, _: bool) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn multicast_loop_v6(&self) -> io::Result<bool> {
++        self.0
++    }
++
++    pub fn join_multicast_v4(&self, _: &Ipv4Addr, _: &Ipv4Addr) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn join_multicast_v6(&self, _: &Ipv6Addr, _: u32) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn leave_multicast_v4(&self, _: &Ipv4Addr, _: &Ipv4Addr) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn leave_multicast_v6(&self, _: &Ipv6Addr, _: u32) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn set_ttl(&self, _: u32) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn ttl(&self) -> io::Result<u32> {
++        self.0
++    }
++
++    pub fn take_error(&self) -> io::Result<Option<io::Error>> {
++        self.0
++    }
++
++    pub fn set_nonblocking(&self, _: bool) -> io::Result<()> {
++        self.0
++    }
++
++    pub fn recv(&self, _: &mut [u8]) -> io::Result<usize> {
++        self.0
++    }
++
++    pub fn peek(&self, _: &mut [u8]) -> io::Result<usize> {
++        self.0
++    }
++
++    pub fn send(&self, _: &[u8]) -> io::Result<usize> {
++        self.0
++    }
++
++    pub fn connect(&self, _: io::Result<&SocketAddr>) -> io::Result<()> {
++        self.0
++    }
++}
++
++impl fmt::Debug for UdpSocket {
++    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        self.0
++    }
++}
++
++pub struct LookupHost(!);
++
++impl LookupHost {
++    pub fn port(&self) -> u16 {
++        self.0
++    }
++}
++
++impl Iterator for LookupHost {
++    type Item = SocketAddr;
++    fn next(&mut self) -> Option<SocketAddr> {
++        self.0
++    }
++}
++
++impl TryFrom<&str> for LookupHost {
++    type Error = io::Error;
++
++    fn try_from(_v: &str) -> io::Result<LookupHost> {
++        unsupported()
++    }
++}
++
++impl<'a> TryFrom<(&'a str, u16)> for LookupHost {
++    type Error = io::Error;
++
++    fn try_from(_v: (&'a str, u16)) -> io::Result<LookupHost> {
++        unsupported()
++    }
++}
++
++#[allow(nonstandard_style)]
++pub mod netc {
++    pub const AF_INET: u8 = 0;
++    pub const AF_INET6: u8 = 1;
++    pub type sa_family_t = u8;
++
++    #[derive(Copy, Clone)]
++    pub struct in_addr {
++        pub s_addr: u32,
++    }
++
++    #[derive(Copy, Clone)]
++    pub struct sockaddr_in {
++        #[allow(dead_code)]
++        pub sin_family: sa_family_t,
++        pub sin_port: u16,
++        pub sin_addr: in_addr,
++    }
++
++    #[derive(Copy, Clone)]
++    pub struct in6_addr {
++        pub s6_addr: [u8; 16],
++    }
++
++    #[derive(Copy, Clone)]
++    pub struct sockaddr_in6 {
++        #[allow(dead_code)]
++        pub sin6_family: sa_family_t,
++        pub sin6_port: u16,
++        pub sin6_addr: in6_addr,
++        pub sin6_flowinfo: u32,
++        pub sin6_scope_id: u32,
++    }
++}
+diff --git a/library/std/src/sys/pal/safaos/os.rs b/library/std/src/sys/pal/safaos/os.rs
+new file mode 100644
+index 00000000..796a8518
+--- /dev/null
++++ b/library/std/src/sys/pal/safaos/os.rs
+@@ -0,0 +1,20 @@
++use crate::os::safaos::api::errors::ErrorStatus;
++use crate::os::safaos::api::syscalls;
++
++pub fn exit(code: i32) -> ! {
++    syscalls::process::exit(code as isize as usize)
++}
++
++fn exit_error(err: ErrorStatus) -> ! {
++    exit(-(err as i32))
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn abort() -> ! {
++    exit_error(ErrorStatus::Panic)
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn __rust_abort() -> ! {
++    exit_error(ErrorStatus::Panic)
++}
+diff --git a/library/std/src/sys/pal/safaos/pipe.rs b/library/std/src/sys/pal/safaos/pipe.rs
+new file mode 100644
+index 00000000..70930e1d
+--- /dev/null
++++ b/library/std/src/sys/pal/safaos/pipe.rs
+@@ -0,0 +1,58 @@
++use crate::io::{self, BorrowedCursor, IoSlice, IoSliceMut};
++use crate::sys::resources::FileDesc;
++use io::{Read, Write};
++
++use super::unsupported;
++
++#[derive(Debug)]
++pub struct AnonPipe(FileDesc);
++
++impl AnonPipe {
++    pub fn into_raw(self) -> FileDesc {
++        self.0
++    }
++
++    pub fn from_fd(fd: FileDesc) -> Self {
++        Self(fd)
++    }
++
++    pub fn try_clone(&self) -> io::Result<Self> {
++        unsupported()
++    }
++
++    pub fn read(&self, buf: &mut [u8]) -> io::Result<usize> {
++        (&mut &self.0).read(buf)
++    }
++
++    pub fn read_buf(&self, buf: BorrowedCursor<'_>) -> io::Result<()> {
++        (&mut &self.0).read_buf(buf)
++    }
++
++    pub fn read_vectored(&self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
++        (&self.0).read_vectored(bufs)
++    }
++
++    pub fn is_read_vectored(&self) -> bool {
++        (&self.0).is_read_vectored()
++    }
++
++    pub fn read_to_end(&self, buf: &mut Vec<u8>) -> io::Result<usize> {
++        (&mut &self.0).read_to_end(buf)
++    }
++
++    pub fn write(&self, buf: &[u8]) -> io::Result<usize> {
++        (&mut &self.0).write(buf)
++    }
++
++    pub fn write_vectored(&self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
++        (&mut &self.0).write_vectored(bufs)
++    }
++
++    pub fn is_write_vectored(&self) -> bool {
++        (&self.0).is_write_vectored()
++    }
++
++    pub fn diverge(&self) -> ! {
++        unimplemented!()
++    }
++}
+diff --git a/library/std/src/sys/pal/safaos/resources.rs b/library/std/src/sys/pal/safaos/resources.rs
+new file mode 100644
+index 00000000..cce498a0
+--- /dev/null
++++ b/library/std/src/sys/pal/safaos/resources.rs
+@@ -0,0 +1,232 @@
++use core::cell::UnsafeCell;
++
++use crate::io::{self, SeekFrom};
++use crate::sys::fs::FileAttr;
++use safa_api::abi::fs as raw_fs;
++use safa_api::abi::fs::OpenOptions;
++use safa_api::{errors::ErrorStatus, syscalls};
++
++macro_rules! path_to_str {
++    ($path: expr) => {
++        unsafe { core::str::from_utf8_unchecked($path.as_os_str().as_encoded_bytes()) }
++    };
++}
++pub(crate) use path_to_str;
++
++#[stable(feature = "rust1", since = "1.0.0")]
++/// Represents an ID over a resource
++pub type ResourceID = u32;
++const _: () = assert!(size_of::<ResourceID>() == size_of::<safa_api::syscalls::types::Ri>());
++
++#[derive(Debug, PartialEq, Eq)]
++pub(crate) struct FileResource(pub(crate) ResourceID);
++
++impl FileResource {
++    pub(crate) fn open(path: &str, options: OpenOptions) -> Result<Self, ErrorStatus> {
++        Ok(Self(syscalls::fs::open(path, options)?))
++    }
++
++    pub fn attrs(&self) -> Result<FileAttr, ErrorStatus> {
++        let attr = syscalls::io::fattrs(self.0)?;
++        Ok(attr.into())
++    }
++
++    pub fn diriter_open(&self) -> Result<DirIterResource, ErrorStatus> {
++        let ri = syscalls::io::diriter_open(self.0)?;
++        Ok(DirIterResource(ri))
++    }
++
++    pub fn truncate(&self, len: usize) -> Result<(), ErrorStatus> {
++        syscalls::io::truncate(self.0, len)
++    }
++
++    pub fn sync(&self) -> Result<(), ErrorStatus> {
++        syscalls::io::sync(self.0)
++    }
++
++    fn read(&self, offset: isize, buf: &mut [u8]) -> Result<usize, ErrorStatus> {
++        syscalls::io::read(self.0, offset, buf)
++    }
++
++    fn write(&self, offset: isize, buf: &[u8]) -> Result<usize, ErrorStatus> {
++        syscalls::io::write(self.0, offset, buf)
++    }
++
++    fn size(&self) -> usize {
++        syscalls::io::fsize(self.0).unwrap()
++    }
++}
++
++#[derive(Debug)]
++pub(crate) struct DirIterResource(ResourceID);
++
++impl DirIterResource {
++    pub(crate) fn open(path: &str) -> Result<Self, ErrorStatus> {
++        let file = FileResource::open(path, raw_fs::OpenOptions::READ)?;
++        file.diriter_open()
++    }
++
++    pub(crate) fn next(&mut self) -> Option<raw_fs::DirEntry> {
++        // should never error expect if there is no more entries it returns ErrorStatus::Generic
++        let raw = syscalls::io::diriter_next(self.0).ok()?;
++        if raw == unsafe { core::mem::zeroed() } { None } else { Some(raw) }
++    }
++}
++
++impl Drop for DirIterResource {
++    fn drop(&mut self) {
++        syscalls::resources::destroy(self.0).unwrap()
++    }
++}
++
++impl Drop for FileResource {
++    fn drop(&mut self) {
++        syscalls::resources::destroy(self.0).unwrap()
++    }
++}
++
++impl Clone for FileResource {
++    fn clone(&self) -> Self {
++        Self(syscalls::resources::dup(self.0).unwrap())
++    }
++}
++
++// FIXME: make seek_at a mutex?
++#[derive(Debug)]
++pub(crate) struct FileDesc {
++    pub(crate) fd: FileResource,
++    seek_at: UnsafeCell<isize>,
++}
++
++impl Clone for FileDesc {
++    fn clone(&self) -> Self {
++        unsafe { Self { fd: self.fd.clone(), seek_at: UnsafeCell::new(*self.seek_at.get()) } }
++    }
++}
++
++impl PartialEq for FileDesc {
++    fn eq(&self, other: &Self) -> bool {
++        self.fd == other.fd
++    }
++}
++
++unsafe impl Send for FileDesc {}
++unsafe impl Sync for FileDesc {}
++
++impl FileDesc {
++    pub fn tell(&self) -> u64 {
++        unsafe { *self.seek_at.get() as u64 }
++    }
++
++    /// converts a raw resource id into a FileDesc
++    /// this is unsafe because the resource id is not checked for validity
++    pub unsafe fn from_raw(ri: ResourceID) -> Self {
++        Self { fd: FileResource(ri), seek_at: UnsafeCell::new(0) }
++    }
++
++    pub(crate) fn fd(&self) -> ResourceID {
++        self.fd.0
++    }
++
++    pub fn fd_raw(&self) -> &FileResource {
++        &self.fd
++    }
++
++    pub fn open(
++        path: &str,
++        write: bool,
++        read: bool,
++        append: bool,
++        create: bool,
++        truncate: bool,
++    ) -> Result<Self, ErrorStatus> {
++        use raw_fs::OpenOptions as RawOpenOptions;
++
++        let mut options = RawOpenOptions::from_bits(0);
++        if write {
++            options = options | RawOpenOptions::WRITE;
++        }
++
++        if read {
++            options = options | RawOpenOptions::READ;
++        }
++
++        if truncate {
++            options = options | RawOpenOptions::WRITE_TRUNCATE;
++        }
++
++        if create {
++            options = options | RawOpenOptions::CREATE_FILE;
++        }
++
++        let fd = FileResource::open(path, options)?;
++        let seek_at = if append { -1 } else { 0 };
++        if truncate {
++            fd.truncate(0)?;
++        }
++        Ok(Self { fd, seek_at: UnsafeCell::new(seek_at) })
++    }
++
++    pub fn fsync(&self) -> io::Result<()> {
++        self.fd.sync()?;
++        Ok(())
++    }
++}
++
++#[stable(feature = "rust1", since = "1.0.0")]
++impl io::Read for &FileDesc {
++    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
++        let at = unsafe { &mut *self.seek_at.get() };
++
++        let read = match self.fd.read(*at, buf) {
++            Ok(amount) => amount,
++            Err(ErrorStatus::InvalidOffset) => return Ok(0),
++            Err(other) => return Err(other.into()),
++        };
++        *at += read as isize;
++
++        Ok(read)
++    }
++}
++
++#[stable(feature = "rust1", since = "1.0.0")]
++impl io::Write for &FileDesc {
++    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
++        let at = unsafe { &mut *self.seek_at.get() };
++
++        let wrote = match self.fd.write(*at, buf) {
++            Ok(amount) => amount,
++            Err(ErrorStatus::InvalidOffset) => return Ok(0),
++            Err(other) => return Err(other.into()),
++        };
++        *at += wrote as isize;
++
++        Ok(wrote)
++    }
++
++    fn flush(&mut self) -> io::Result<()> {
++        self.fsync()
++    }
++}
++
++#[stable(feature = "rust1", since = "1.0.0")]
++impl io::Seek for &FileDesc {
++    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
++        unsafe {
++            let seek_at = &mut *self.seek_at.get();
++            match pos {
++                SeekFrom::Start(start) => (*seek_at) = start as isize,
++                SeekFrom::End(end) => (*seek_at) = -(end as isize + 1),
++                SeekFrom::Current(current) => (*seek_at) += current as isize,
++            }
++
++            if (*seek_at) >= 0 {
++                Ok(*seek_at as u64)
++            } else {
++                let end_at = (-(*seek_at)) as usize;
++                let size = self.fd.size();
++                Ok((size - end_at + 1) as u64)
++            }
++        }
++    }
++}
+diff --git a/library/std/src/sys/pal/safaos/start.rs b/library/std/src/sys/pal/safaos/start.rs
+new file mode 100644
+index 00000000..84facf5c
+--- /dev/null
++++ b/library/std/src/sys/pal/safaos/start.rs
+@@ -0,0 +1,61 @@
++use safa_api::abi::process::AbiStructures;
++use safa_api::ffi::{slice::Slice, str::Str};
++use safa_api::syscalls;
++
++unsafe extern "C" {
++    fn main() -> isize;
++}
++
++#[unsafe(no_mangle)]
++unsafe extern "C" fn _rust_start_inner(
++    argc: usize,
++    argv: *mut Str,
++    envc: usize,
++    envp: *mut Slice<u8>,
++    task_abi_structures: *const AbiStructures,
++) -> ! {
++    unsafe {
++        let args = Slice::from_raw_parts(argv, argc);
++        let env = Slice::from_raw_parts(envp, envc);
++        safa_api::process::init::sysapi_init(args, env, *task_abi_structures);
++
++        crate::sys::time::init_timer();
++        let results = main();
++
++        syscalls::process::exit(results as usize);
++    }
++}
++
++#[unsafe(no_mangle)]
++#[allow(unused)]
++#[unsafe(naked)]
++#[linkage = "weak"]
++pub extern "C" fn _start(
++    argc: usize,
++    argv: *mut Str,
++    envc: usize,
++    envp: *mut Slice<u8>,
++    task_abi_structures: *const AbiStructures,
++) {
++    unsafe {
++        #[cfg(target_arch = "aarch64")]
++        core::arch::naked_asm!(
++            "
++            mov fp, #0
++            sub sp, sp, #16
++            stp xzr, xzr, [sp]
++            bl _rust_start_inner
++            "
++        );
++        #[cfg(target_arch = "x86_64")]
++        core::arch::naked_asm!(
++            "
++            and rsp, ~0xf
++            push rbp
++            push rbp
++            call _rust_start_inner
++            ud2
++        ",
++        );
++    };
++}
+diff --git a/library/std/src/sys/paths/mod.rs b/library/std/src/sys/paths/mod.rs
+index 8880a837..9c1d85ca 100644
+--- a/library/std/src/sys/paths/mod.rs
++++ b/library/std/src/sys/paths/mod.rs
+@@ -47,6 +47,10 @@ mod imp {
+         mod windows;
+         use windows as imp;
+     }
++    target_os = "safaos" => {
++        mod safaos;
++        use safaos as imp;
++    }
+     _ => {
+         mod unsupported;
+         use unsupported as imp;
+diff --git a/library/std/src/sys/paths/safaos.rs b/library/std/src/sys/paths/safaos.rs
+new file mode 100644
+index 00000000..7c9f2737
+--- /dev/null
++++ b/library/std/src/sys/paths/safaos.rs
+@@ -0,0 +1,80 @@
++use crate::ffi::{OsStr, OsString};
++use crate::path::{self, PathBuf};
++use crate::sys::unsupported;
++use crate::{fmt, io};
++use safa_api::syscalls;
++
++use crate::sys::pal::resources::path_to_str;
++
++pub fn getcwd() -> io::Result<PathBuf> {
++    let cwd = syscalls::process_misc::getcwd()?;
++    let path = unsafe { OsString::from_encoded_bytes_unchecked(cwd.into_bytes()) };
++    let path = PathBuf::from(path);
++    Ok(path)
++}
++
++pub fn chdir(path: &path::Path) -> io::Result<()> {
++    let path = path_to_str!(path);
++    syscalls::process_misc::chdir(path)?;
++    Ok(())
++}
++
++const PATH_SEPARATOR: char = ';';
++
++pub struct SplitPaths<'a>(core::str::Split<'a, char>);
++
++pub fn split_paths(unparsed: &OsStr) -> SplitPaths<'_> {
++    SplitPaths(
++        unparsed.to_str().expect("invalid utf-8 while splitting paths").split(PATH_SEPARATOR),
++    )
++}
++
++impl<'a> Iterator for SplitPaths<'a> {
++    type Item = PathBuf;
++    fn next(&mut self) -> Option<PathBuf> {
++        self.0.next().map(PathBuf::from)
++    }
++}
++
++#[derive(Debug)]
++pub struct JoinPathsError;
++
++pub fn join_paths<I, T>(paths: I) -> Result<OsString, JoinPathsError>
++where
++    I: Iterator<Item = T>,
++    T: AsRef<OsStr>,
++{
++    let mut new_string = String::new();
++    for t in paths {
++        let t = t.as_ref();
++        if !new_string.is_empty() {
++            new_string.push(PATH_SEPARATOR);
++        }
++        new_string.push_str(t.to_str().expect("invalid utf-8 while joining paths"));
++    }
++    Ok(OsString::from(new_string))
++}
++
++impl fmt::Display for JoinPathsError {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        "not supported on this platform yet".fmt(f)
++    }
++}
++
++impl crate::error::Error for JoinPathsError {
++    fn description(&self) -> &str {
++        "not supported on this platform yet"
++    }
++}
++
++pub fn current_exe() -> io::Result<PathBuf> {
++    unsupported()
++}
++
++pub fn temp_dir() -> PathBuf {
++    PathBuf::from("tmp:/")
++}
++
++pub fn home_dir() -> Option<PathBuf> {
++    None
++}
+diff --git a/library/std/src/sys/pipe/mod.rs b/library/std/src/sys/pipe/mod.rs
+index 85228963..238d3111 100644
+--- a/library/std/src/sys/pipe/mod.rs
++++ b/library/std/src/sys/pipe/mod.rs
+@@ -13,6 +13,10 @@
+         mod motor;
+         pub use motor::{Pipe, pipe};
+     }
++    target_os = "safaos" => {
++        mod safaos;
++        pub use safaos::{Pipe, pipe};
++    }
+     _ => {
+         mod unsupported;
+         pub use unsupported::{Pipe, pipe};
+diff --git a/library/std/src/sys/pipe/safaos.rs b/library/std/src/sys/pipe/safaos.rs
+new file mode 100644
+index 00000000..4b10f868
+--- /dev/null
++++ b/library/std/src/sys/pipe/safaos.rs
+@@ -0,0 +1,7 @@
++use crate::io;
++pub use crate::sys::pal::pipe::AnonPipe as Pipe;
++
++#[inline]
++pub fn pipe() -> io::Result<(Pipe, Pipe)> {
++    Err(io::Error::UNSUPPORTED_PLATFORM)
++}
+diff --git a/library/std/src/sys/process/mod.rs b/library/std/src/sys/process/mod.rs
+index 46f4ebf6..1878be72 100644
+--- a/library/std/src/sys/process/mod.rs
++++ b/library/std/src/sys/process/mod.rs
+@@ -15,6 +15,10 @@
+         mod motor;
+         use motor as imp;
+     }
++    target_os = "safaos" => {
++        mod safaos;
++        use safaos as imp;
++    }
+     _ => {
+         mod unsupported;
+         use unsupported as imp;
+diff --git a/library/std/src/sys/process/safaos.rs b/library/std/src/sys/process/safaos.rs
+new file mode 100644
+index 00000000..02328af2
+--- /dev/null
++++ b/library/std/src/sys/process/safaos.rs
+@@ -0,0 +1,440 @@
++use super::env::{CommandEnv, CommandEnvs};
++pub use crate::ffi::OsString as EnvKey;
++use crate::ffi::{OsStr, OsString};
++use crate::num::NonZero;
++use crate::os::safaos::ResourceID;
++use crate::os::safaos::api::errors::ErrorStatus;
++use crate::os::safaos::api::syscalls;
++use crate::path::Path;
++use crate::process::StdioPipes;
++use crate::sys::fs::File;
++use crate::sys::pal::pipe::AnonPipe;
++use crate::{fmt, io};
++use safa_api::errors::SysResult;
++use safa_api::process::stdio::{sysget_stderr, sysget_stdin, sysget_stdout};
++
++use crate::sys::pal::resources::FileDesc;
++
++////////////////////////////////////////////////////////////////////////////////
++// Command
++////////////////////////////////////////////////////////////////////////////////
++
++pub struct Command {
++    program: OsString,
++    args: Vec<OsString>,
++    env: CommandEnv,
++
++    cwd: Option<OsString>,
++    stdin: Option<Stdio>,
++    stdout: Option<Stdio>,
++    stderr: Option<Stdio>,
++}
++
++#[derive(Debug, PartialEq, Clone, Copy)]
++enum StdioKind {
++    Stdout,
++    Stdin,
++    Stderr,
++}
++
++#[derive(Debug, PartialEq, Clone)]
++pub enum Stdio {
++    Inherit,
++    InheritStdout,
++    InheritStderr,
++    Null,
++    MakePipe,
++    InheritFile(FileDesc),
++}
++
++impl Stdio {
++    // `&mut self` because Self::InheritFile has to live as long as the results, and because of hacks
++    fn into_raw(&mut self, kind: StdioKind) -> Option<ResourceID> {
++        match self {
++            Stdio::Inherit => Some(match kind {
++                StdioKind::Stdout => sysget_stdout(),
++                StdioKind::Stdin => sysget_stdin(),
++                StdioKind::Stderr => sysget_stderr(),
++            }),
++            Stdio::InheritStdout => Some(sysget_stdout()),
++            Stdio::InheritStderr => Some(sysget_stderr()),
++            Stdio::Null => {
++                *self = Stdio::InheritFile(
++                    FileDesc::open("dev:/null", true, true, false, false, false)
++                        .expect("`dev:/null` error opening"),
++                );
++                self.into_raw(kind)
++            }
++            Stdio::InheritFile(f) => Some(f.fd()),
++            s => unimplemented!("stdio: {:?}", s),
++        }
++    }
++
++    fn into_anon_pipe(self) -> Option<AnonPipe> {
++        match self {
++            Self::Inherit | Self::InheritStderr | Self::InheritStdout => None,
++            Stdio::Null => None,
++            Stdio::InheritFile(fd) => Some(AnonPipe::from_fd(fd)),
++            s => unimplemented!("stdio: {:?}", s),
++        }
++    }
++}
++
++impl Command {
++    pub fn new(program: &OsStr) -> Command {
++        Command {
++            program: program.to_owned(),
++            args: vec![program.to_owned()],
++            env: Default::default(),
++            cwd: None,
++            stdin: None,
++            stdout: None,
++            stderr: None,
++        }
++    }
++
++    pub fn arg(&mut self, arg: &OsStr) {
++        self.args.push(arg.to_owned());
++    }
++
++    pub fn env_mut(&mut self) -> &mut CommandEnv {
++        &mut self.env
++    }
++
++    pub fn cwd(&mut self, dir: &OsStr) {
++        self.cwd = Some(dir.to_owned());
++    }
++
++    pub fn stdin(&mut self, stdin: Stdio) {
++        self.stdin = Some(stdin);
++    }
++
++    pub fn stdout(&mut self, stdout: Stdio) {
++        self.stdout = Some(stdout);
++    }
++
++    pub fn stderr(&mut self, stderr: Stdio) {
++        self.stderr = Some(stderr);
++    }
++
++    pub fn get_program(&self) -> &OsStr {
++        &self.program
++    }
++
++    pub fn get_args(&self) -> CommandArgs<'_> {
++        let mut iter = self.args.iter();
++        iter.next();
++        CommandArgs { iter }
++    }
++
++    pub fn get_envs(&self) -> CommandEnvs<'_> {
++        self.env.iter()
++    }
++
++    pub fn get_env_clear(&self) -> bool {
++        // FIXME: Implement custom Env
++        false
++    }
++
++    pub fn get_current_dir(&self) -> Option<&Path> {
++        self.cwd.as_ref().map(|cs| Path::new(cs))
++    }
++
++    pub fn spawn(
++        &mut self,
++        default: Stdio,
++        _needs_stdin: bool,
++    ) -> io::Result<(Process, StdioPipes)> {
++        use safa_api::abi::process::SpawnFlags;
++
++        let (mut stdin, mut stdout, mut stderr) = (
++            self.stdin.take().unwrap_or_else(|| default.clone()),
++            self.stdout.take().unwrap_or_else(|| default.clone()),
++            self.stderr.take().unwrap_or(default),
++        );
++
++        let (stdinn, stdoutn, stderrn) = (
++            stdin.into_raw(StdioKind::Stdin),
++            stdout.into_raw(StdioKind::Stdout),
++            stderr.into_raw(StdioKind::Stderr),
++        );
++
++        assert!(
++            self.cwd.is_none() && self.env.is_unchanged(),
++            "Spawning a process with custom env or cwd is not supported for SafaOS"
++        );
++
++        let name = unsafe { self.program.to_str().unwrap_unchecked() };
++        let argv =
++            self.args.iter().map(|s| unsafe { s.to_str().unwrap_unchecked() }).collect::<Vec<_>>();
++        let path = name;
++
++        let pid = syscalls::process::spawn(
++            Some(name),
++            path,
++            argv,
++            SpawnFlags::CLONE_CWD,
++            safa_api::abi::process::RawContextPriority::Default,
++            stdinn,
++            stdoutn,
++            stderrn,
++            None,
++        )?;
++
++        let (stdin, stdout, stderr) =
++            (stdin.into_anon_pipe(), stdout.into_anon_pipe(), stderr.into_anon_pipe());
++        Ok((Process(pid), StdioPipes { stdin, stdout, stderr }))
++    }
++
++    pub fn output(&mut self) -> io::Result<(ExitStatus, Vec<u8>, Vec<u8>)> {
++        let (mut proc, mut pipes) = self.spawn(Stdio::Inherit, false)?;
++        let status = proc.wait()?;
++        drop(pipes.stdin.take());
++
++        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
++        // TODO: properly add Pipes
++        if let Some(out) = pipes.stdout.take() {
++            out.read_to_end(&mut stdout)?;
++        }
++
++        if let Some(err) = pipes.stderr.take() {
++            err.read_to_end(&mut stderr)?;
++        }
++        Ok((status, stdout, stderr))
++    }
++}
++
++pub fn output(cmd: &mut Command) -> crate::io::Result<(ExitStatus, Vec<u8>, Vec<u8>)> {
++    Command::output(cmd)
++}
++
++impl From<AnonPipe> for Stdio {
++    fn from(pipe: AnonPipe) -> Stdio {
++        Stdio::InheritFile(pipe.into_raw())
++    }
++}
++
++impl From<io::Stdout> for Stdio {
++    fn from(_: io::Stdout) -> Stdio {
++        Self::InheritStdout
++    }
++}
++
++impl From<io::Stderr> for Stdio {
++    fn from(_: io::Stderr) -> Stdio {
++        Self::InheritStderr
++    }
++}
++
++impl From<File> for Stdio {
++    fn from(file: File) -> Stdio {
++        Stdio::InheritFile(file.into_raw())
++    }
++}
++
++impl fmt::Debug for Command {
++    // show all attributes
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        if f.alternate() {
++            let mut debug_command = f.debug_struct("Command");
++            debug_command.field("program", &self.program).field("args", &self.args);
++            if !self.env.is_unchanged() {
++                debug_command.field("env", &self.env);
++            }
++
++            if self.cwd.is_some() {
++                debug_command.field("cwd", &self.cwd);
++            }
++
++            if self.stdin.is_some() {
++                debug_command.field("stdin", &self.stdin);
++            }
++            if self.stdout.is_some() {
++                debug_command.field("stdout", &self.stdout);
++            }
++            if self.stderr.is_some() {
++                debug_command.field("stderr", &self.stderr);
++            }
++
++            debug_command.finish()
++        } else {
++            if let Some(ref cwd) = self.cwd {
++                write!(f, "cd {cwd:?} && ")?;
++            }
++            if self.env.does_clear() {
++                write!(f, "env -i ")?;
++                // Altered env vars will be printed next, that should exactly work as expected.
++            } else {
++                // Removed env vars need the command to be wrapped in `env`.
++                let mut any_removed = false;
++                for (key, value_opt) in self.get_envs() {
++                    if value_opt.is_none() {
++                        if !any_removed {
++                            write!(f, "env ")?;
++                            any_removed = true;
++                        }
++                        write!(f, "-u {} ", key.to_string_lossy())?;
++                    }
++                }
++            }
++            // Altered env vars can just be added in front of the program.
++            for (key, value_opt) in self.get_envs() {
++                if let Some(value) = value_opt {
++                    write!(f, "{}={value:?} ", key.to_string_lossy())?;
++                }
++            }
++            if self.program != self.args[0] {
++                write!(f, "[{:?}] ", self.program)?;
++            }
++            write!(f, "{:?}", self.args[0])?;
++
++            for arg in &self.args[1..] {
++                write!(f, " {:?}", arg)?;
++            }
++            Ok(())
++        }
++    }
++}
++
++#[derive(PartialEq, Eq, Clone, Copy, Debug, Default)]
++#[non_exhaustive]
++pub struct ExitStatus(isize);
++
++impl ExitStatus {
++    pub fn exit_ok(&self) -> Result<(), ExitStatusError> {
++        match SysResult::from_isize(self.0).into_result() {
++            Ok(_) => Ok(()),
++            Err(e) => Err(ExitStatusError(e)),
++        }
++    }
++
++    pub fn code(&self) -> Option<i32> {
++        Some(self.0 as i32)
++    }
++}
++
++impl fmt::Display for ExitStatus {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        match self.exit_ok() {
++            Ok(()) => write!(f, "Success"),
++            Err(err) => write!(f, "{}", err),
++        }
++    }
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++#[repr(transparent)]
++pub struct ExitStatusError(ErrorStatus);
++
++impl core::fmt::Display for ExitStatusError {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        write!(f, "{}", self.0.as_str())
++    }
++}
++
++impl ExitStatusError {
++    pub fn code(self) -> Option<NonZero<i32>> {
++        let i32 = Into::<ExitStatus>::into(self).code()?;
++        NonZero::new(i32)
++    }
++}
++
++impl Into<ExitStatus> for ExitStatusError {
++    fn into(self) -> ExitStatus {
++        ExitStatus(-(self.0 as isize))
++    }
++}
++
++#[derive(PartialEq, Eq, Clone, Copy, Debug)]
++pub struct ExitCode(isize);
++
++impl ExitCode {
++    pub const SUCCESS: ExitCode = ExitCode(0);
++    pub const FAILURE: ExitCode = ExitCode(-1);
++
++    pub fn as_i32(&self) -> i32 {
++        self.0 as i32
++    }
++}
++
++impl From<u8> for ExitCode {
++    fn from(code: u8) -> Self {
++        Self(-(code as usize as isize))
++    }
++}
++
++impl From<usize> for ExitCode {
++    fn from(code: usize) -> Self {
++        Self(code as isize)
++    }
++}
++
++impl From<isize> for ExitCode {
++    fn from(value: isize) -> Self {
++        Self(value)
++    }
++}
++
++pub struct Process(u32);
++
++impl Process {
++    pub fn id(&self) -> u32 {
++        self.0
++    }
++
++    pub fn kill(&mut self) -> io::Result<()> {
++        todo!("pkill is not yet implemented")
++    }
++
++    pub fn wait(&mut self) -> io::Result<ExitStatus> {
++        let exit_code = syscalls::process::wait(self.0)?;
++        Ok(ExitStatus(exit_code as isize))
++    }
++
++    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
++        let exit_code = syscalls::process::try_cleanup(self.0)?;
++        Ok(exit_code.map(|code| ExitStatus(code as isize)))
++    }
++}
++
++pub struct CommandArgs<'a> {
++    iter: crate::slice::Iter<'a, OsString>,
++}
++
++impl<'a> Iterator for CommandArgs<'a> {
++    type Item = &'a OsStr;
++    fn next(&mut self) -> Option<&'a OsStr> {
++        self.iter.next().map(|os| &**os)
++    }
++    fn size_hint(&self) -> (usize, Option<usize>) {
++        self.iter.size_hint()
++    }
++}
++
++impl<'a> ExactSizeIterator for CommandArgs<'a> {
++    fn len(&self) -> usize {
++        self.iter.len()
++    }
++    fn is_empty(&self) -> bool {
++        self.iter.is_empty()
++    }
++}
++
++impl<'a> fmt::Debug for CommandArgs<'a> {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        f.debug_list().entries(self.iter.clone()).finish()
++    }
++}
++pub fn getpid() -> u32 {
++    todo!("no method to getpid currently")
++}
++
++pub type ChildPipe = crate::sys::pal::pipe::AnonPipe;
++pub fn read_output(
++    out: ChildPipe,
++    _stdout: &mut Vec<u8>,
++    _err: ChildPipe,
++    _stderr: &mut Vec<u8>,
++) -> io::Result<()> {
++    match out.diverge() {}
++}
+diff --git a/library/std/src/sys/random/mod.rs b/library/std/src/sys/random/mod.rs
+index 91f72d07..ce60d100 100644
+--- a/library/std/src/sys/random/mod.rs
++++ b/library/std/src/sys/random/mod.rs
+@@ -106,6 +106,7 @@
+         all(target_family = "wasm", target_os = "unknown"),
+         target_os = "xous",
+         target_os = "vexos",
++        target_os = "safaos",
+     ) => {
+         // FIXME: finally remove std support for wasm32-unknown-unknown
+         // FIXME: add random data generation to xous
+@@ -122,6 +123,7 @@
+     all(target_os = "wasi", not(target_env = "p1")),
+     target_os = "xous",
+     target_os = "vexos",
++    target_os = "safaos",
+ )))]
+ pub fn hashmap_random_keys() -> (u64, u64) {
+     let mut buf = [0; 16];
+diff --git a/library/std/src/sys/stdio/mod.rs b/library/std/src/sys/stdio/mod.rs
+index 86d0f3fe..1d26bc42 100644
+--- a/library/std/src/sys/stdio/mod.rs
++++ b/library/std/src/sys/stdio/mod.rs
+@@ -41,6 +41,10 @@
+         mod xous;
+         pub use xous::*;
+     }
++    target_os = "safaos" => {
++        mod safaos;
++        pub use safaos::*;
++    }
+     target_os = "zkvm" => {
+         mod zkvm;
+         pub use zkvm::*;
+diff --git a/library/std/src/sys/stdio/safaos.rs b/library/std/src/sys/stdio/safaos.rs
+new file mode 100644
+index 00000000..80d52c91
+--- /dev/null
++++ b/library/std/src/sys/stdio/safaos.rs
+@@ -0,0 +1,78 @@
++use crate::io;
++use crate::os::safaos::api::errors::ErrorStatus;
++use safa_api::process::stdio::{sysget_stderr, sysget_stdin, sysget_stdout};
++use safa_api::syscalls;
++#[stable(feature = "stdio", since = "1.0.0")]
++impl From<ErrorStatus> for io::Error {
++    fn from(err: ErrorStatus) -> io::Error {
++        let error = err.as_str();
++        let kind = crate::os::safaos::into_io_error_kind(err);
++
++        io::Error::new(kind, error)
++    }
++}
++
++pub struct Stdin;
++pub struct Stdout;
++pub struct Stderr;
++
++impl Stdin {
++    pub const fn new() -> Stdin {
++        Stdin
++    }
++}
++
++impl io::Read for Stdin {
++    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
++        Ok(syscalls::io::read(sysget_stdin(), -1, buf)?)
++    }
++}
++
++impl Stdout {
++    pub const fn new() -> Stdout {
++        Stdout
++    }
++}
++
++impl io::Write for Stdout {
++    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
++        let results = syscalls::io::write(sysget_stdout(), -1, buf)?;
++        if buf.last() == Some(&b'\n') {
++            self.flush()?;
++        }
++        Ok(results)
++    }
++
++    fn flush(&mut self) -> io::Result<()> {
++        Ok(syscalls::io::sync(sysget_stdout())?)
++    }
++}
++
++impl Stderr {
++    pub const fn new() -> Stderr {
++        Stderr
++    }
++}
++
++impl io::Write for Stderr {
++    #[inline]
++    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
++        let wrote = syscalls::io::write(sysget_stderr(), -1, buf)?;
++        self.flush()?;
++        Ok(wrote)
++    }
++    #[inline]
++    fn flush(&mut self) -> io::Result<()> {
++        Ok(syscalls::io::sync(sysget_stderr())?)
++    }
++}
++
++pub const STDIN_BUF_SIZE: usize = 128;
++
++pub fn is_ebadf(_err: &io::Error) -> bool {
++    true
++}
++
++pub fn panic_output() -> Option<impl io::Write> {
++    Some(Stderr::new())
++}
+diff --git a/library/std/src/sys/sync/condvar/mod.rs b/library/std/src/sys/sync/condvar/mod.rs
+index 83cf0ae6..862b277e 100644
+--- a/library/std/src/sys/sync/condvar/mod.rs
++++ b/library/std/src/sys/sync/condvar/mod.rs
+@@ -10,6 +10,7 @@
+         target_os = "fuchsia",
+         all(target_family = "wasm", target_feature = "atomics"),
+         target_os = "hermit",
++        target_os = "safaos",
+     ) => {
+         mod futex;
+         pub use futex::Condvar;
+diff --git a/library/std/src/sys/sync/mutex/mod.rs b/library/std/src/sys/sync/mutex/mod.rs
+index e3d6ad11..0a9101c2 100644
+--- a/library/std/src/sys/sync/mutex/mod.rs
++++ b/library/std/src/sys/sync/mutex/mod.rs
+@@ -9,6 +9,7 @@
+         target_os = "dragonfly",
+         all(target_family = "wasm", target_feature = "atomics"),
+         target_os = "hermit",
++        target_os = "safaos",
+     ) => {
+         mod futex;
+         pub use futex::Mutex;
+diff --git a/library/std/src/sys/sync/once/mod.rs b/library/std/src/sys/sync/once/mod.rs
+index 5796c6d2..7d97c4c6 100644
+--- a/library/std/src/sys/sync/once/mod.rs
++++ b/library/std/src/sys/sync/once/mod.rs
+@@ -19,6 +19,7 @@
+         target_os = "dragonfly",
+         target_os = "fuchsia",
+         target_os = "hermit",
++        target_os = "safaos",
+     ) => {
+         mod futex;
+         pub use futex::{Once, OnceState};
+diff --git a/library/std/src/sys/sync/rwlock/mod.rs b/library/std/src/sys/sync/rwlock/mod.rs
+index 8603fca2..6526adf4 100644
+--- a/library/std/src/sys/sync/rwlock/mod.rs
++++ b/library/std/src/sys/sync/rwlock/mod.rs
+@@ -10,6 +10,7 @@
+         all(target_family = "wasm", target_feature = "atomics"),
+         target_os = "hermit",
+        target_os = "motor",
++        target_os = "safaos",
+     ) => {
+         mod futex;
+         pub use futex::RwLock;
+diff --git a/library/std/src/sys/sync/thread_parking/mod.rs b/library/std/src/sys/sync/thread_parking/mod.rs
+index 9d5a0a99..8378061b 100644
+--- a/library/std/src/sys/sync/thread_parking/mod.rs
++++ b/library/std/src/sys/sync/thread_parking/mod.rs
+@@ -10,6 +10,7 @@
+         target_os = "fuchsia",
+         target_os = "motor",
+         target_os = "hermit",
++        target_os = "safaos",
+     ) => {
+         mod futex;
+         pub use futex::Parker;
+diff --git a/library/std/src/sys/thread/mod.rs b/library/std/src/sys/thread/mod.rs
+index 9816981c..c8f4cb1d 100644
+--- a/library/std/src/sys/thread/mod.rs
++++ b/library/std/src/sys/thread/mod.rs
+@@ -115,6 +115,14 @@
+         mod unsupported;
+         pub use unsupported::{current_os_id, set_name};
+     }
++    target_os = "safaos" => {
++        mod safaos;
++        pub use safaos::{Thread, available_parallelism, sleep, yield_now, DEFAULT_MIN_STACK_SIZE};
++
++        #[expect(dead_code)]
++        mod unsupported;
++        pub use unsupported::{current_os_id, set_name};
++    }
+     _ => {
+         mod unsupported;
+         pub use unsupported::{Thread, available_parallelism, current_os_id, set_name, sleep, yield_now, DEFAULT_MIN_STACK_SIZE};
+diff --git a/library/std/src/sys/thread/safaos.rs b/library/std/src/sys/thread/safaos.rs
+new file mode 100644
+index 00000000..23c2d2de
+--- /dev/null
++++ b/library/std/src/sys/thread/safaos.rs
+@@ -0,0 +1,85 @@
++use safa_api::syscalls;
++
++use crate::io;
++use crate::num::NonZero;
++use crate::sys::unsupported;
++use crate::thread::ThreadInit;
++use crate::time::Duration;
++
++pub struct Thread(u32);
++
++pub const DEFAULT_MIN_STACK_SIZE: usize = 64 * 1024;
++
++impl Thread {
++    // unsafe: see thread::Builder::spawn_unchecked for safety requirements
++    pub unsafe fn new(stack: usize, init: Box<ThreadInit>) -> io::Result<Thread> {
++        let stack_size = NonZero::new(stack.max(DEFAULT_MIN_STACK_SIZE));
++
++        let raw_ptr = Box::into_raw(init);
++        #[unsafe(no_mangle)]
++        extern "C" fn thread_start_inner(_cid: u32, init: *mut ThreadInit) -> ! {
++            let init: Box<ThreadInit> = unsafe { Box::from_raw(init) };
++            let rust_start = init.init();
++            rust_start();
++            // run all destructors
++            unsafe { crate::sys::thread_local::destructors::run() };
++            crate::rt::thread_cleanup();
++            syscalls::thread::exit(0);
++        }
++
++        #[unsafe(naked)]
++        extern "C" fn thread_start(cid: u32, init: usize) -> ! {
++            #[cfg(target_arch = "x86_64")]
++            core::arch::naked_asm!(
++                "
++                and rsp, ~0xf
++                push rbp
++                push rbp
++                mov rbp, rsp
++                call thread_start_inner
++                "
++            );
++            #[cfg(target_arch = "aarch64")]
++            core::arch::naked_asm!(
++                "
++                mov fp, #0
++                sub sp, sp, #16
++                stp xzr, xzr, [sp]
++                bl thread_start_inner
++                "
++            );
++        }
++
++        let cid = syscalls::thread::spawn2(
++            thread_start,
++            raw_ptr as usize,
++            safa_api::abi::process::RawContextPriority::Default,
++            stack_size,
++        );
++        match cid {
++            Ok(cid) => Ok(Thread(cid)),
++            Err(e) => {
++                unsafe {
++                    _ = Box::from_raw(raw_ptr);
++                };
++                Err(e.into())
++            }
++        }
++    }
++
++    pub fn join(self) {
++        syscalls::thread::wait(self.0).expect("failed to join on thread");
++    }
++}
++
++pub fn available_parallelism() -> io::Result<NonZero<usize>> {
++    unsupported()
++}
++
++pub fn yield_now() {
++    syscalls::thread::yield_now();
++}
++
++pub fn sleep(dur: Duration) {
++    syscalls::thread::sleep(dur).expect("sleep duration is too long");
++}
+diff --git a/library/std/src/sys/thread_local/mod.rs b/library/std/src/sys/thread_local/mod.rs
+index e88011aa..cd26d3f4 100644
+--- a/library/std/src/sys/thread_local/mod.rs
++++ b/library/std/src/sys/thread_local/mod.rs
+@@ -118,6 +118,7 @@ pub(crate) fn enable() {
+         any(
+             target_os = "hermit",
+             target_os = "xous",
++            target_os = "safaos",
+         ) => {
+             // `std` is the only runtime, so it just calls the destructor functions
+             // itself when the time comes.
+diff --git a/library/std/src/sys/time/mod.rs b/library/std/src/sys/time/mod.rs
+index 6cd1850e..37351c08 100644
+--- a/library/std/src/sys/time/mod.rs
++++ b/library/std/src/sys/time/mod.rs
+@@ -44,6 +44,11 @@ mod imp {
+         mod xous;
+         use xous as imp;
+     }
++    target_os = "safaos" => {
++        mod safaos;
++        use safaos as imp;
++        pub(crate) use safaos::init_timer;
++    }
+     _ => {
+         mod unsupported;
+         use unsupported as imp;
+diff --git a/library/std/src/sys/time/safaos.rs b/library/std/src/sys/time/safaos.rs
+new file mode 100644
+index 00000000..3ac58832
+--- /dev/null
++++ b/library/std/src/sys/time/safaos.rs
+@@ -0,0 +1,58 @@
++use safa_api::syscalls::clock;
++
++use crate::time::Duration;
++
++#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
++pub struct Instant(Duration);
++
++#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
++pub struct SystemTime(Duration);
++
++pub const UNIX_EPOCH: SystemTime = SystemTime(Duration::from_secs(0));
++
++static TIMER_FREQ: core::cell::SyncUnsafeCell<u64> = core::cell::SyncUnsafeCell::new(0);
++
++pub(crate) unsafe fn init_timer() {
++    unsafe { *TIMER_FREQ.get() = clock::getcntfreq() };
++}
++
++impl Instant {
++    pub fn now() -> Instant {
++        let time = clock::getcnttime(unsafe { *TIMER_FREQ.get() });
++        Self(time)
++    }
++
++    pub fn checked_sub_instant(&self, other: &Instant) -> Option<Duration> {
++        self.0.checked_sub(other.0)
++    }
++
++    pub fn checked_add_duration(&self, other: &Duration) -> Option<Instant> {
++        Some(Instant(self.0.checked_add(*other)?))
++    }
++
++    pub fn checked_sub_duration(&self, other: &Duration) -> Option<Instant> {
++        Some(Instant(self.0.checked_sub(*other)?))
++    }
++}
++
++impl SystemTime {
++    pub const MAX: SystemTime = SystemTime(Duration::MAX);
++    pub const MIN: SystemTime = SystemTime(Duration::ZERO);
++
++    pub fn now() -> SystemTime {
++        let time = clock::clock_gettime(clock::Clock::RTC);
++        Self(time)
++    }
++
++    pub fn sub_time(&self, other: &SystemTime) -> Result<Duration, Duration> {
++        self.0.checked_sub(other.0).ok_or_else(|| other.0 - self.0)
++    }
++
++    pub fn checked_add_duration(&self, other: &Duration) -> Option<SystemTime> {
++        Some(SystemTime(self.0.checked_add(*other)?))
++    }
++
++    pub fn checked_sub_duration(&self, other: &Duration) -> Option<SystemTime> {
++        Some(SystemTime(self.0.checked_sub(*other)?))
++    }
++}
+diff --git a/src/bootstrap/src/core/sanity.rs b/src/bootstrap/src/core/sanity.rs
+index c4a6b68a..a87486ee 100644
+--- a/src/bootstrap/src/core/sanity.rs
++++ b/src/bootstrap/src/core/sanity.rs
+@@ -39,6 +39,8 @@ pub struct Finder {
+     // just a dummy comment so the list doesn't get onelined
+     "x86_64-unknown-linux-gnumsan",
+     "x86_64-unknown-linux-gnutsan",
++    "x86_64-unknown-safaos",
++    "aarch64-unknown-safaos",
+ ];
+ 
+ /// Minimum version threshold for libstdc++ required when using prebuilt LLVM
+diff --git a/src/librustdoc/clean/cfg.rs b/src/librustdoc/clean/cfg.rs
+index d6c22782..0352a64a 100644
+--- a/src/librustdoc/clean/cfg.rs
++++ b/src/librustdoc/clean/cfg.rs
+@@ -533,6 +533,7 @@ fn human_readable_target_os(os: Symbol) -> Option<&'static str> {
+         Windows => "Windows",
+         Xous => "Xous",
+         Zkvm => "zero knowledge Virtual Machine",
++        SafaOs => "SafaOS",
+         // tidy-alphabetical-end
+         Unknown | Other(_) => return Option::None,
+     })
+diff --git a/target-aarch64.json b/target-aarch64.json
+new file mode 100644
+index 00000000..228266e4
+--- /dev/null
++++ b/target-aarch64.json
+@@ -0,0 +1,37 @@
++{
++  "arch": "aarch64",
++  "os": "safaos",
++  "crt-objects-fallback": "false",
++  "data-layout": "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32",
++  "disable-redzone": true,
++  "features": "+v8a,+strict-align,+neon,+fp-armv8",
++  "linker": "rust-lld",
++  "linker-flavor": "gnu-lld",
++  "llvm-target": "aarch64-unknown-safaos",
++  "max-atomic-width": 128,
++  "metadata": {
++    "description": "SafaOS's ARM64, hardfloat",
++    "host_tools": false,
++    "std": false,
++    "tier": 2
++  },
++  "panic-strategy": "abort",
++  "pre-link-args": {
++    "gnu": [
++      "--fix-cortex-a53-843419"
++    ],
++    "gnu-lld": [
++      "--fix-cortex-a53-843419"
++    ]
++  },
++  "relocation-model": "static",
++  "stack-probes": {
++    "kind": "inline"
++  },
++  "supported-sanitizers": [
++    "kcfi",
++    "kernel-address"
++  ],
++  "target-pointer-width": "64",
++  "has-thread-local": true
++}
+\ No newline at end of file
+diff --git a/target-x86_64.json b/target-x86_64.json
+new file mode 100644
+index 00000000..41eaa538
+--- /dev/null
++++ b/target-x86_64.json
+@@ -0,0 +1,30 @@
++{
++    "arch": "x86_64",
++    "os": "safaos",
++    "code-model": "small",
++    "cpu": "x86-64",
++    "crt-objects-fallback": "false",
++    "data-layout": "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
++    "features": "+mmx,+sse2,+sse3,+sse,-avx,-sse4.1,-sse4.2,-ssse3",
++    "linker": "rust-lld",
++    "linker-flavor": "gnu-lld",
++    "llvm-target": "x86_64-unknown-none-elf",
++    "max-atomic-width": 64,
++    "metadata": {
++        "description": "SafaOS's x86_64 hardfloat",
++        "host_tools": false,
++        "std": true,
++        "tier": 2
++    },
++    "panic-strategy": "abort",
++    "plt-by-default": false,
++    "position-independent-executables": false,
++    "relro-level": "full",
++    "stack-probes": {
++        "kind": "inline"
++    },
++    "static-position-independent-executables": false,
++    "supported-sanitizers": ["kcfi", "kernel-address"],
++    "target-pointer-width": 64,
++    "has-thread-local": true
++}

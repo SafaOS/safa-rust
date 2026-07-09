@@ -1,0 +1,140 @@
+name: Build and Release safaos Toolchain
+
+# Runs the build on every push (any branch/commit). If that push was a tag,
+# an extra `release` job also publishes the built artifacts as a GitHub
+# Release. Plain commit pushes just build and stop.
+on:
+  push:
+  workflow_dispatch: {}
+
+env:
+  # Hardcoded for now instead of being derived from a tag.
+  RUST_VERSION: "1.96.1"
+  SAFAOS_ARCHES: "x86_64 aarch64"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build one host toolchain, then loop over both safaos target arches using it
+  # ---------------------------------------------------------------------------
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - built_for: x86_64-linux
+            os: ubuntu-22.04
+            host_triple: x86_64-unknown-linux-gnu
+            experimental: false
+
+          - built_for: aarch64-linux
+            os: ubuntu-24.04-arm # hosted arm64 runner; adjust if unavailable on your plan
+            host_triple: aarch64-unknown-linux-gnu
+            experimental: false
+
+          - built_for: macos
+            os: macos-14 # Apple Silicon (arm64) host
+            host_triple: aarch64-apple-darwin
+            experimental: false
+
+          - built_for: x86_64-linux-musl
+            os: ubuntu-22.04
+            host_triple: x86_64-unknown-linux-musl
+            experimental: true # "try a musl build" - allowed to fail without failing the run
+
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
+
+    steps:
+      - name: Checkout patches repo
+        uses: actions/checkout@v4
+
+      # --- Linux (glibc) host deps ---
+      - name: Install Linux build deps
+        if: runner.os == 'Linux' && matrix.host_triple != 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential python3 curl git ninja-build cmake
+
+      # --- Linux (musl) host deps: need a musl cross toolchain WITH g++, see thread notes ---
+      - name: Install Linux+musl build deps
+        if: matrix.host_triple == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential python3 curl git ninja-build cmake
+          curl -LO https://musl.cc/x86_64-linux-musl-cross.tgz
+          tar xzf x86_64-linux-musl-cross.tgz
+          echo "$PWD/x86_64-linux-musl-cross/bin" >> "$GITHUB_PATH"
+
+      # --- macOS host deps ---
+      - name: Install macOS build deps
+        if: runner.os == 'macOS'
+        run: |
+          brew install python3 ninja cmake
+
+      - name: Clone rust source and apply patches
+        run: bash clone.sh
+
+      # ------------------------------------------------------------------
+      # Build the host toolchain once, then install it per safaos target.
+      # Each install call adds one extra target on top of the already-built
+      # host compiler/cargo, so the second call reuses the incremental build.
+      # ------------------------------------------------------------------
+      - name: Build + install toolchain for each safaos arch
+        working-directory: rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          for arch in ${SAFAOS_ARCHES}; do
+            dest="$GITHUB_WORKSPACE/dist/${arch}-unknown-safaos"
+            mkdir -p "$dest"
+            echo "::group::Building for ${arch}-unknown-safaos (host ${{ matrix.host_triple }})"
+            DESTDIR="$dest" \
+              ./x install -i --stage 1 \
+                --target "${{ matrix.host_triple }},${arch}-unknown-safaos" \
+                compiler/rustc library/std cargo
+            echo "::endgroup::"
+          done
+
+      - name: Package artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          for arch in ${SAFAOS_ARCHES}; do
+            name="${RUST_VERSION}-${arch}-unknown-safaos-${{ matrix.built_for }}"
+            tar -C "dist/${arch}-unknown-safaos" -czf "artifacts/${name}.tar.gz" .
+            echo "Packaged artifacts/${name}.tar.gz"
+          done
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: toolchain-${{ matrix.built_for }}
+          path: artifacts/*.tar.gz
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Only runs when the push was a tag. Plain commit pushes stop at `build`.
+  # ---------------------------------------------------------------------------
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifact tree
+        run: |
+          mkdir -p release
+          find artifacts -name "*.tar.gz" -exec cp {} release/ \;
+          ls -la release
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.tar.gz
+          fail_on_unmatched_files: true
+          generate_release_notes: true
