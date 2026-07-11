@@ -9,7 +9,7 @@ on:
 
 env:
   # Hardcoded for now instead of being derived from a tag.
-  RUST_VERSION: "1.96.1"
+  RUST_VERSION: "1.97.0.2"
   SAFAOS_ARCHES: "x86_64 aarch64"
 
 jobs:
@@ -158,7 +158,7 @@ jobs:
             DESTDIR="$dest" \
               ./x install -i --stage 1 \
                 --target "${{ matrix.host_triple }},${arch}-unknown-safaos" \
-                compiler/rustc library/std cargo src --skip src/doc --skip src/bootstrap
+                compiler/rustc library/std cargo src --skip src/doc --skip src/bootstrap rustfmt
             echo "::endgroup::"
           done
 
