@@ -158,7 +158,7 @@ jobs:
             DESTDIR="$dest" \
               ./x install -i --stage 1 \
                 --target "${{ matrix.host_triple }},${arch}-unknown-safaos" \
-                compiler/rustc library/std cargo
+                compiler/rustc library/std cargo src --skip src/doc --skip src/bootstrap
             echo "::endgroup::"
           done
 
