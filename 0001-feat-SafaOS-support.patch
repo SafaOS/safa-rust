@@ -2433,10 +2433,10 @@ index 000000000..87e610646
 +}
 diff --git a/library/std/src/sys/pal/safaos/os.rs b/library/std/src/sys/pal/safaos/os.rs
 new file mode 100644
-index 000000000..796a85189
+index 000000000..e535f9119
 --- /dev/null
 +++ b/library/std/src/sys/pal/safaos/os.rs
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,21 @@
 +use crate::os::safaos::api::errors::ErrorStatus;
 +use crate::os::safaos::api::syscalls;
 +
@@ -2448,6 +2448,7 @@ index 000000000..796a85189
 +    exit(-(err as i32))
 +}
 +
++#[linkage = "weak"]
 +#[unsafe(no_mangle)]
 +pub extern "C" fn abort() -> ! {
 +    exit_error(ErrorStatus::Panic)
