@@ -168,7 +168,7 @@ index 000000000..fc4fd0da3
 +    }
 +}
 diff --git a/library/Cargo.lock b/library/Cargo.lock
-index 99e976517..75d684bea 100644
+index 99e976517..39380e583 100644
 --- a/library/Cargo.lock
 +++ b/library/Cargo.lock
 @@ -8,7 +8,7 @@ version = "0.25.1"
@@ -198,9 +198,9 @@ index 99e976517..75d684bea 100644
  
 +[[package]]
 +name = "gimli"
-+version = "0.33.0"
++version = "0.34.0"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "0bf7f043f89559805f8c7cacc432749b2fa0d0a0a9ee46ce47164ed5ba7f126c"
++checksum = "1033caf0b349c518623b5396bfb2cf0bddf44f0306d543a250e5743297aafd10"
 +dependencies = [
 + "rustc-std-workspace-alloc",
 + "rustc-std-workspace-core",
@@ -214,10 +214,10 @@ index 99e976517..75d684bea 100644
  [[package]]
  name = "libc"
 -version = "0.2.185"
-+version = "0.2.186"
++version = "0.2.189"
  source = "registry+https://github.com/rust-lang/crates.io-index"
 -checksum = "52ff2c0fe9bc6cb6b14a0592c2ff4fa9ceb83eea9db979b0487cd054946a2b8f"
-+checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
++checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
  dependencies = [
   "rustc-std-workspace-core",
  ]
@@ -241,15 +241,27 @@ index 99e976517..75d684bea 100644
  dependencies = [
   "rustc-std-workspace-core",
  ]
+@@ -175,9 +194,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "moto-rt"
+-version = "0.16.0"
++version = "0.16.4"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "29aea9f7dfeb258e030a84e0ec38a9c2ec2063d4f45eb2db31445cfc40b3dba1"
++checksum = "0aadbab5a5ca5a01ec1ff4bc03c2c3a7643f0e1d97ad5a4a5b58ce78504e17da"
+ dependencies = [
+  "rustc-std-workspace-alloc",
+  "rustc-std-workspace-core",
 @@ -250,18 +269,18 @@ dependencies = [
  
  [[package]]
  name = "rand"
 -version = "0.9.2"
-+version = "0.9.4"
++version = "0.9.5"
  source = "registry+https://github.com/rust-lang/crates.io-index"
 -checksum = "6db2770f06117d490610c7488547d543617b21bfa07796d7a12f6f1bd53850d1"
-+checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
++checksum = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41"
  dependencies = [
   "rand_core",
  ]
@@ -283,7 +295,7 @@ index 99e976517..75d684bea 100644
 +[[package]]
 +name = "safa-abi"
 +version = "0.6.0"
-+source = "git+https://github.com/SafaOS/safa-abi#1d2f0360aa3f6e975f58380d8e8e0afa6a5b73b5"
++source = "git+https://github.com/SafaOS/safa-abi#1f22b731781f9309588d31242f374be648acd5aa"
 +dependencies = [
 + "rustc-std-workspace-alloc",
 + "rustc-std-workspace-core",
@@ -292,7 +304,7 @@ index 99e976517..75d684bea 100644
 +[[package]]
 +name = "safa-api"
 +version = "0.6.1"
-+source = "git+https://github.com/SafaOS/safa-api#de0d4c017b704f5c04d1325f3cc5f2a43fe6d147"
++source = "git+https://github.com/SafaOS/safa-api#8a18237c58456b09ebfb519bda0a6b76470bd827"
 +dependencies = [
 + "dlmalloc",
 + "lock_api",
@@ -339,13 +351,13 @@ index 99e976517..75d684bea 100644
  [[package]]
  name = "unwinding"
 -version = "0.2.8"
-+version = "0.2.9"
++version = "0.2.10"
  source = "registry+https://github.com/rust-lang/crates.io-index"
 -checksum = "60612c845ef41699f39dc8c5391f252942c0a88b7d15da672eff0d14101bbd6d"
-+checksum = "8ac8808f11429cd2a9323c960cfca5f3da45bcc5717cc82f51721a3f2213056d"
++checksum = "4b134ada16dda9e435abe2a6d76a01d497bc60707357845a15f9b0ed42dc88ce"
  dependencies = [
 - "gimli",
-+ "gimli 0.33.0",
++ "gimli 0.34.0",
   "rustc-std-workspace-core",
  ]
  
@@ -460,7 +472,7 @@ index 000000000..a45c68d13
 +    }
 +}
 diff --git a/library/std/Cargo.toml b/library/std/Cargo.toml
-index 4c433d497..17ac7a04b 100644
+index 4c433d497..829b57c6a 100644
 --- a/library/std/Cargo.toml
 +++ b/library/std/Cargo.toml
 @@ -102,6 +102,12 @@ vex-sdk = { version = "0.27.0", features = [
@@ -469,8 +481,8 @@ index 4c433d497..17ac7a04b 100644
  
 +
 +[target.'cfg(target_os = "safaos")'.dependencies]
-+safa-api = { version = "0.6.0", git = "https://github.com/SafaOS/safa-api", features = [
-+    'rustc-dep-of-std',
++safa-api = { version = "0.6.1", git = "https://github.com/SafaOS/safa-api", features = [
++    'rustc-dep-of-std'
 +], public = true }
 +
  [features]
