@@ -168,7 +168,7 @@ index 000000000..fc4fd0da3
 +    }
 +}
 diff --git a/library/Cargo.lock b/library/Cargo.lock
-index 99e976517..39380e583 100644
+index 99e976517..69dd9d7ce 100644
 --- a/library/Cargo.lock
 +++ b/library/Cargo.lock
 @@ -8,7 +8,7 @@ version = "0.25.1"
@@ -209,7 +209,7 @@ index 99e976517..39380e583 100644
  [[package]]
  name = "hashbrown"
  version = "0.17.1"
-@@ -146,18 +156,27 @@ dependencies = [
+@@ -146,18 +156,18 @@ dependencies = [
  
  [[package]]
  name = "libc"
@@ -222,15 +222,6 @@ index 99e976517..39380e583 100644
   "rustc-std-workspace-core",
  ]
  
-+[[package]]
-+name = "lock_api"
-+version = "0.4.14"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
-+dependencies = [
-+ "scopeguard",
-+]
-+
  [[package]]
  name = "memchr"
 -version = "2.7.6"
@@ -241,7 +232,7 @@ index 99e976517..39380e583 100644
  dependencies = [
   "rustc-std-workspace-core",
  ]
-@@ -175,9 +194,9 @@ dependencies = [
+@@ -175,9 +185,9 @@ dependencies = [
  
  [[package]]
  name = "moto-rt"
@@ -253,7 +244,7 @@ index 99e976517..39380e583 100644
  dependencies = [
   "rustc-std-workspace-alloc",
   "rustc-std-workspace-core",
-@@ -250,18 +269,18 @@ dependencies = [
+@@ -250,18 +260,18 @@ dependencies = [
  
  [[package]]
  name = "rand"
@@ -276,7 +267,7 @@ index 99e976517..39380e583 100644
  
  [[package]]
  name = "rand_xorshift"
-@@ -274,9 +293,9 @@ dependencies = [
+@@ -274,9 +284,9 @@ dependencies = [
  
  [[package]]
  name = "rustc-demangle"
@@ -288,7 +279,7 @@ index 99e976517..39380e583 100644
  dependencies = [
   "rustc-std-workspace-core",
  ]
-@@ -312,12 +331,49 @@ dependencies = [
+@@ -312,12 +322,42 @@ dependencies = [
   "std",
  ]
  
@@ -307,18 +298,11 @@ index 99e976517..39380e583 100644
 +source = "git+https://github.com/SafaOS/safa-api#8a18237c58456b09ebfb519bda0a6b76470bd827"
 +dependencies = [
 + "dlmalloc",
-+ "lock_api",
 + "rustc-std-workspace-alloc",
 + "rustc-std-workspace-core",
 + "safa-abi",
 + "simpldns",
 +]
-+
-+[[package]]
-+name = "scopeguard"
-+version = "1.2.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 +
  [[package]]
  name = "shlex"
@@ -338,7 +322,7 @@ index 99e976517..39380e583 100644
  [[package]]
  name = "std"
  version = "0.0.0"
-@@ -341,6 +397,7 @@ dependencies = [
+@@ -341,6 +381,7 @@ dependencies = [
   "rand",
   "rand_xorshift",
   "rustc-demangle",
@@ -346,7 +330,7 @@ index 99e976517..39380e583 100644
   "std_detect",
   "unwind",
   "vex-sdk",
-@@ -390,11 +447,11 @@ dependencies = [
+@@ -390,11 +431,11 @@ dependencies = [
  
  [[package]]
  name = "unwinding"
@@ -361,7 +345,7 @@ index 99e976517..39380e583 100644
   "rustc-std-workspace-core",
  ]
  
-@@ -419,9 +476,9 @@ dependencies = [
+@@ -419,9 +460,9 @@ dependencies = [
  
  [[package]]
  name = "wasip2"
@@ -472,7 +456,7 @@ index 000000000..a45c68d13
 +    }
 +}
 diff --git a/library/std/Cargo.toml b/library/std/Cargo.toml
-index 4c433d497..829b57c6a 100644
+index 4c433d497..3ab186f09 100644
 --- a/library/std/Cargo.toml
 +++ b/library/std/Cargo.toml
 @@ -102,6 +102,12 @@ vex-sdk = { version = "0.27.0", features = [
@@ -483,7 +467,7 @@ index 4c433d497..829b57c6a 100644
 +[target.'cfg(target_os = "safaos")'.dependencies]
 +safa-api = { version = "0.6.1", git = "https://github.com/SafaOS/safa-api", features = [
 +    'rustc-dep-of-std'
-+], public = true }
++], default-features = false, public = true }
 +
  [features]
  backtrace = [
