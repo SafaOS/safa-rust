@@ -168,7 +168,7 @@ index 000000000..fc4fd0da3
 +    }
 +}
 diff --git a/library/Cargo.lock b/library/Cargo.lock
-index 99e976517..2973ea197 100644
+index 99e976517..6f01af917 100644
 --- a/library/Cargo.lock
 +++ b/library/Cargo.lock
 @@ -8,7 +8,7 @@ version = "0.25.1"
@@ -261,7 +261,7 @@ index 99e976517..2973ea197 100644
 +[[package]]
 +name = "safa-api"
 +version = "0.6.1"
-+source = "git+https://github.com/SafaOS/safa-api#8a18237c58456b09ebfb519bda0a6b76470bd827"
++source = "git+https://github.com/SafaOS/safa-api#931243c5fb8ef64307331c7e42782dfe2fe49df8"
 +dependencies = [
 + "dlmalloc",
 + "rustc-std-workspace-alloc",
